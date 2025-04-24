@@ -1,0 +1,106 @@
+# -----------------------------------------------------------
+# Operating System Files
+# -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# -----------------------------------------------------------
+# IDE / Editor Directories and Settings
+# -----------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.pydevproject
+
+# -----------------------------------------------------------
+# Python Bytecode and Build Artifacts
+# -----------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+
+# -----------------------------------------------------------
+# Virtual Environment Directories
+# -----------------------------------------------------------
+env/
+venv/
+.venv/
+ENV/
+.ENV/
+pythonenv*/
+
+# -----------------------------------------------------------
+# Logs and Local Databases
+# -----------------------------------------------------------
+*.log
+logs.db
+*.sqlite
+*.sqlite3
+*.db
+
+# -----------------------------------------------------------
+# Config Files
+# -----------------------------------------------------------
+config.yaml
+*.ini
+.env
+.envrc
+secrets.json
+
+# -----------------------------------------------------------
+# Downloaded Images
+# -----------------------------------------------------------
+review_images/
+*/review_images/
+*/profiles/
+*/reviews/
+images/
+downloaded_images/
+
+# -----------------------------------------------------------
+# Temporary and Output Files
+# -----------------------------------------------------------
+*.json
+*.ids
+temp/
+output/
+*.csv
+*.xlsx
+*.xls
+*.tmp
+tmp/
+
+# -----------------------------------------------------------
+# Exceptions (files that should be included despite patterns above)
+# -----------------------------------------------------------
+!requirements.txt
+!example_config.yaml
+!README.md
+!LICENSE
+
+# -----------------------------------------------------------
+# Output JSON Files
+# -----------------------------------------------------------
+my_reviews_enriched.json
+company_info.json
+google_reviews.json
+google_reviews.ids
+
+# -----------------------------------------------------------
+# Test Files
+# -----------------------------------------------------------
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
