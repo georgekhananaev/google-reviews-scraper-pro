@@ -1,0 +1,56 @@
+# 🔥 Google Maps Reviews Scraper Pro Configuration 🔥
+# April 2025 Edition - THE BEAST IS UNLEASHED
+
+# TARGET URL - Paste yours here, don't screw this up
+url: "https://maps.app.goo.gl/6tkNMDjcj3SS6LJe9"  # <- CHANGE THIS!
+
+# OPERATION MODE SETTINGS
+headless: true                # true = ninja mode, false = watch the browser do its thing
+sort_by: "newest"             # "newest" = fresh meat first, "highest"/"lowest" = rating order, "relevance" = Google's BS algorithm
+stop_on_match: false          # true = bail when we hit reviews we've seen, false = scrape EVERYTHING EVERY TIME
+overwrite_existing: false     # true = nuke & replace old reviews, false = just add the new stuff
+
+# MONGODB CONFIGURATION
+use_mongodb: true             # true = store in a real database like a professional, false = JSON only like a caveman
+mongodb:
+  uri: "mongodb://username:password@localhost:27017/"  # FIX THIS or weep when it fails
+  database: "reviews"         # Adjust if you're particular about your DB naming
+  collection: "google_reviews" # Where the magic happens
+
+# JSON BACKUP OPTIONS (don't disable unless you enjoy data loss)
+backup_to_json: true          # KEEP THIS TRUE unless you hate yourself and love regret
+json_path: "google_reviews.json"  # Where to dump the backup data
+seen_ids_path: "google_reviews.ids" # Tracks what we've already scraped
+
+# DATE HANDLING (trust me, you want this)
+convert_dates: true           # true = gorgeous ISO dates, false = Google's garbage "2 weeks ago" nonsense
+
+# IMAGE ACQUISITION SETTINGS
+download_images: true         # true = hoard ALL the photos, false = links only
+image_dir: "review_images"    # Where to stash the image loot
+download_threads: 4           # Crank this up to 8+ on decent machines for SPEED
+store_local_paths: true       # true = remember where we saved everything (smart!)
+
+# URL REWRITING (for image hosting on YOUR domain instead of Google's)
+replace_urls: true            # true = your domain in the URLs, false = keep Google links
+custom_url_base: "https://yourdomain.com/images"  # YOUR domain here
+custom_url_profiles: "/profiles/"  # Where profile pics live on your server
+custom_url_reviews: "/reviews/"    # Where review pics live on your server
+preserve_original_urls: true  # true = keep Google URLs as backup, false = nuke 'em
+
+# DOCUMENT ENRICHMENT (tag EVERYTHING)
+# These values get slapped onto EVERY review document
+custom_params:
+  company: "Your Business Name"  # WHO these reviews belong to
+  source: "Google Maps"          # WHERE they came from
+  location: "Bangkok, Thailand"  # WHERE the business is
+  scraper_version: "3.5.0"       # For your sanity when troubleshooting
+  # Add whatever other fields you want - sky's the limit
+  
+# ADVANCED TWEAKS (for the true power users)
+# browser_timeout: 30           # How long to wait before declaring a page DEAD
+# max_reviews: 1000             # Cap the scrape count (0 = UNLIMITED POWER!)
+# language: "en"                # Force Google interface language - helps with some locales
+# proxy: "socks5://user:pass@host:port" # Cloak your IP when Google gets suspicious
+# retry_attempts: 3             # How many retries on network fails before giving up
+# scroll_delay: 0.7             # Seconds between scrolls (lower = faster but riskier)
