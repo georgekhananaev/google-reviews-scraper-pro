@@ -39,7 +39,7 @@ Coffee (mandatory for watching thousands of reviews roll in)
 
 1. Grab the source code:
 ```bash
-git clone https://github.com/yourusername/google-reviews-scraper-pro.git
+git clone https://github.com/georgekhananaev/google-reviews-scraper-pro.git
 cd google-reviews-scraper-pro
 ```
 
