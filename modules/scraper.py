@@ -21,7 +21,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from tqdm import tqdm
 
-from modules.data_storage import MongoDBStorage, JSONStorage, merge_review, merge_review_with_translation
+from modules.data_storage import MongoDBStorage, JSONStorage, merge_review
 from modules.models import RawReview
 
 # Logger
@@ -168,11 +168,6 @@ class GoogleReviewsScraper:
         self.json_storage = JSONStorage(config)
         self.backup_to_json = config.get("backup_to_json", True)
         self.overwrite_existing = config.get("overwrite_existing", False)
-        
-        # Translation feature settings
-        self.append_translations = config.get("append_translations", False)
-        self.translation_language = config.get("translation_language", "auto")
-        self.force_full_scan = config.get("force_full_scan", False)
 
     def setup_driver(self, headless: bool) -> Chrome:
         """
@@ -281,13 +276,8 @@ class GoogleReviewsScraper:
         try:
             # Strategy 1: Data attribute detection (most reliable across languages)
             tab_index = tab.get_attribute("data-tab-index")
-            if tab_index in ["1", "2", "reviews"]:  # Reviews can be index 1 or 2 depending on layout
-                # Double-check this is actually a reviews tab by checking text content
-                aria_label = (tab.get_attribute("aria-label") or "").lower()
-                tab_text = (tab.text or "").lower()
-                if any(word.lower() in aria_label or word.lower() in tab_text for word in REVIEW_WORDS):
-                    log.debug(f"Found reviews tab by data-tab-index: {tab_index}")
-                    return True
+            if tab_index == "1" or tab_index == "reviews":
+                return True
 
             # Strategy 2: Role and aria attributes (accessibility detection)
             role = tab.get_attribute("role")
@@ -295,27 +285,20 @@ class GoogleReviewsScraper:
             aria_label = (tab.get_attribute("aria-label") or "").lower()
 
             # Many review tabs have role="tab" and data attributes
-            if role == "tab" and any(word.lower() in aria_label for word in REVIEW_WORDS):
-                log.debug(f"Found reviews tab by aria-label: {aria_label}")
+            if role == "tab" and any(word in aria_label for word in REVIEW_WORDS):
                 return True
 
             # Strategy 3: Text content detection (multiple sources)
-            tab_text = tab.text.lower() if tab.text else ""
-            inner_html = tab.get_attribute("innerHTML").lower() or ""
-            text_content = tab.get_attribute("textContent").lower() or ""
-            
             sources = [
-                tab_text,  # Direct text
+                tab.text.lower() if tab.text else "",  # Direct text
                 aria_label,  # ARIA label
-                inner_html,  # Inner HTML
-                text_content  # Text content
+                tab.get_attribute("innerHTML").lower() or "",  # Inner HTML
+                tab.get_attribute("textContent").lower() or ""  # Text content
             ]
 
             # Check all sources against our comprehensive keyword list
-            for i, source in enumerate(sources):
-                if any(word.lower() in source for word in REVIEW_WORDS):
-                    source_names = ["text", "aria-label", "innerHTML", "textContent"]
-                    log.debug(f"Found reviews tab by {source_names[i]}: '{source}' (contains review word)")
+            for source in sources:
+                if any(word in source for word in REVIEW_WORDS):
                     return True
 
             # Strategy 4: Nested element detection
@@ -326,9 +309,8 @@ class GoogleReviewsScraper:
                         child_text = child.text.lower() if child.text else ""
                         child_content = child.get_attribute("textContent").lower() or ""
 
-                        if any(word.lower() in child_text for word in REVIEW_WORDS) or any(
-                                word.lower() in child_content for word in REVIEW_WORDS):
-                            log.debug(f"Found reviews tab by child element text: '{child_text}' or '{child_content}'")
+                        if any(word in child_text for word in REVIEW_WORDS) or any(
+                                word in child_content for word in REVIEW_WORDS):
                             return True
                     except:
                         continue
@@ -339,18 +321,14 @@ class GoogleReviewsScraper:
             for attr in ["href", "data-href", "data-url", "data-target"]:
                 attr_value = (tab.get_attribute(attr) or "").lower()
                 if attr_value and ("review" in attr_value or "rating" in attr_value):
-                    log.debug(f"Found reviews tab by {attr}: {attr_value}")
                     return True
 
             # Strategy 6: Class detection (some review tabs have specific classes)
             tab_class = tab.get_attribute("class") or ""
             review_classes = ["review", "reviews", "rating", "ratings", "comments", "feedback", "g4jrve"]
-            if any(cls in tab_class.lower() for cls in review_classes):
-                log.debug(f"Found reviews tab by class: {tab_class}")
+            if any(cls in tab_class for cls in review_classes):
                 return True
 
-            # Log what we found for debugging
-            log.debug(f"Tab not identified as reviews tab - role: {role}, index: {tab_index}, aria-label: '{aria_label}', text: '{tab_text}', class: '{tab_class}'")
             return False
 
         except StaleElementReferenceException:
@@ -364,89 +342,14 @@ class GoogleReviewsScraper:
         Highly dynamic reviews tab detection and clicking with multiple fallback strategies.
         Works across different languages, layouts, and browser environments.
         """
-        max_timeout = 30  # Maximum seconds to try
+        max_timeout = 25  # Maximum seconds to try
         end_time = time.time() + max_timeout
         attempts = 0
-        
-        # First, wait for the business panel to load
-        log.info("Waiting for business information panel to load...")
-        business_panel_loaded = False
-        panel_wait_end = time.time() + 15  # Wait up to 15 seconds for business panel
-        
-        while time.time() < panel_wait_end:
-            try:
-                # Look for indicators that the business panel has loaded
-                business_indicators = [
-                    # Business name or rating elements
-                    '[role="main"] h1',
-                    '[role="main"] .DUwDvf',  # Business name class
-                    '[role="main"] .F7nice',  # Rating class
-                    '[role="main"] .fontHeadlineSmall',
-                    # Or any elements with review-related text
-                    '//*[contains(translate(text(), "REVIEWS", "reviews"), "review")]',
-                ]
-                
-                for indicator in business_indicators[:-1]:  # CSS selectors first
-                    elements = driver.find_elements(By.CSS_SELECTOR, indicator)
-                    if elements:
-                        log.info(f"Business panel detected using selector: {indicator}")
-                        business_panel_loaded = True
-                        break
-                
-                if not business_panel_loaded:
-                    # Try XPath selector for review text
-                    elements = driver.find_elements(By.XPATH, business_indicators[-1])
-                    if elements:
-                        log.info("Business panel detected using review text search")
-                        business_panel_loaded = True
-                
-                if business_panel_loaded:
-                    break
-                    
-                time.sleep(1)
-            except Exception as e:
-                log.debug(f"Error checking for business panel: {e}")
-                time.sleep(1)
-        
-        if business_panel_loaded:
-            log.info("Business panel loaded successfully")
-            # Give it a bit more time for tabs to appear
-            time.sleep(2)
-        else:
-            log.warning("Business panel may not have loaded completely, continuing with tab search...")
-            
-        # If no business panel is detected, try URL manipulation to force reviews view
-        if not business_panel_loaded:
-            try:
-                current_url = driver.current_url
-                if "/place/" in current_url and "/reviews" not in current_url:
-                    # Try to navigate directly to reviews by modifying URL
-                    if "?" in current_url:
-                        base_url = current_url.split("?")[0]
-                        params = current_url.split("?")[1]
-                        new_url = f"{base_url}/reviews?{params}"
-                    else:
-                        new_url = f"{current_url}/reviews"
-                    
-                    log.info(f"Attempting to navigate directly to reviews: {new_url}")
-                    driver.get(new_url)
-                    time.sleep(3)
-                    
-                    # Check if this worked by looking for review content
-                    review_cards = driver.find_elements(By.CSS_SELECTOR, 'div[data-review-id]')
-                    if review_cards:
-                        log.info("Successfully navigated to reviews page")
-                        return True
-            except Exception as e:
-                log.debug(f"URL manipulation failed: {e}")
 
         # Define different selectors to try in order of reliability
         tab_selectors = [
-            # Direct tab selectors - try both common indexes
-            '[data-tab-index="1"]',  # Common tab index for reviews
-            '[data-tab-index="2"]',  # Alternative tab index for reviews
-            'button[role="tab"][data-tab-index="1"]',  # Exact match from HTML
-            'button[role="tab"][data-tab-index="2"]',  # Alternative exact match
+            # Direct tab selectors
+            '[data-tab-index="1"]',  # Most common tab index
             '[role="tab"][data-tab-index]',  # Any tab with index
             'button[role="tab"]',  # Button tabs
             'div[role="tab"]',  # Div tabs
@@ -461,9 +364,6 @@ class GoogleReviewsScraper:
             'button:contains("reviews")',  # Button containing "reviews"
             'div[role="tablist"] > *',  # Any tab in a tab list
             'div.m6QErb div[role="tablist"] > *',  # Google Maps specific tablist
-            
-            # Fallback selectors
-            '[role="tab"]',  # Any tab element
         ]
 
         # Record successful clicks for debugging
@@ -537,39 +437,23 @@ class GoogleReviewsScraper:
 
         # If we reach here, try XPath as a last resort
         if time.time() <= end_time:
-            log.info("Trying XPath-based text matching for review tabs...")
             for language_keyword in REVIEW_WORDS:
                 try:
-                    # Try different XPath patterns for review text
-                    xpath_patterns = [
-                        f"//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{language_keyword.lower()}')]",
-                        f"//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{language_keyword.lower()}')]",
-                        f"//*[@role='tab' and contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{language_keyword.lower()}')]",
-                        f"//*[contains(translate(@aria-label, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{language_keyword.lower()}')]",
-                    ]
-                    
-                    for xpath in xpath_patterns:
-                        try:
-                            elements = driver.find_elements(By.XPATH, xpath)
-                            for element in elements:
-                                try:
-                                    # Skip if it's a script tag or hidden element
-                                    if element.tag_name.lower() in ['script', 'style', 'noscript']:
-                                        continue
-                                    if not element.is_displayed():
-                                        continue
-                                        
-                                    log.info(f"Trying XPath pattern with keyword '{language_keyword}': {xpath}")
-                                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", element)
-                                    time.sleep(0.7)
-                                    driver.execute_script("arguments[0].click();", element)
-                                    time.sleep(1.5)
+                    # Try XPath contains text
+                    xpath = f"//*[contains(text(), '{language_keyword}')]"
+                    elements = driver.find_elements(By.XPATH, xpath)
 
-                                    if self.verify_reviews_tab_clicked(driver):
-                                        log.info(f"Successfully clicked element with keyword '{language_keyword}'")
-                                        return True
-                                except:
-                                    continue
+                    for element in elements:
+                        try:
+                            log.info(f"Trying XPath with keyword '{language_keyword}'")
+                            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", element)
+                            time.sleep(0.7)
+                            driver.execute_script("arguments[0].click();", element)
+                            time.sleep(1.5)
+
+                            if self.verify_reviews_tab_clicked(driver):
+                                log.info(f"Successfully clicked element with keyword '{language_keyword}'")
+                                return True
                         except:
                             continue
                 except:
@@ -701,6 +585,7 @@ class GoogleReviewsScraper:
                             # Get button text and attributes for verification
                             button_text = element.text.strip() if element.text else ""
                             button_aria = element.get_attribute("aria-label") or ""
+                            button_class = element.get_attribute("class") or ""
 
                             # Skip buttons that are clearly not sort buttons
                             negative_keywords = ["back", "next", "previous", "close", "cancel", "חזרה", "סגור", "ปิด"]
@@ -708,18 +593,24 @@ class GoogleReviewsScraper:
                                    for keyword in negative_keywords):
                                 continue
 
-                            # Additional check - make sure this is actually a sort button for reviews
-                            if ("sort" not in button_text.lower() and "sort" not in button_aria.lower() and
-                                "סדר" not in button_text.lower() and "เรียง" not in button_text.lower() and
-                                "ordenar" not in button_text.lower() and "trier" not in button_text.lower()):
-                                log.debug(f"Button doesn't appear to be a sort button, skipping: '{button_text}' / '{button_aria}'")
-                                continue
+                            # Positive detection for sort buttons
+                            sort_keywords = ["sort", "Sort", "SORT", "סידור", "เรียง", "排序", "trier", "ordenar", "sortieren"]
+                            has_sort_keyword = any(keyword in button_text or keyword in button_aria 
+                                                 for keyword in sort_keywords)
+                            
+                            # Check for common sort button classes
+                            has_sort_class = "HQzyZ" in button_class or "sort" in button_class.lower()
+                            
+                            # Check for aria attributes that indicate a dropdown
+                            has_dropdown_attrs = (element.get_attribute("aria-haspopup") == "true" or
+                                                element.get_attribute("aria-expanded") is not None)
 
-                            # Found a potential sort button
-                            sort_button = element
-                            log.info(f"Found sort button with selector: {selector}")
-                            log.info(f"Button text: '{button_text}', aria-label: '{button_aria}'")
-                            break
+                            if has_sort_keyword or has_sort_class or has_dropdown_attrs:
+                                # Found a potential sort button
+                                sort_button = element
+                                log.info(f"Found sort button with selector: {selector}")
+                                log.info(f"Button text: '{button_text}', aria-label: '{button_aria}'")
+                                break
                         except Exception as e:
                             log.debug(f"Error checking element: {e}")
                             continue
@@ -770,6 +661,32 @@ class GoogleReviewsScraper:
                             break
                     except:
                         continue
+            
+            # Final fallback: look for any button in the reviews area that might open a dropdown
+            if not sort_button:
+                try:
+                    # Look specifically in the reviews container area
+                    reviews_container = driver.find_elements(By.CSS_SELECTOR, 'div.m6QErb, div.DxyBCb')
+                    for container in reviews_container:
+                        try:
+                            # Find all buttons in this container
+                            buttons = container.find_elements(By.TAG_NAME, 'button')
+                            for button in buttons:
+                                try:
+                                    if (button.is_displayed() and button.is_enabled() and
+                                        (button.get_attribute("aria-haspopup") == "true" or
+                                         "dropdown" in (button.get_attribute("class") or "").lower())):
+                                        sort_button = button
+                                        log.info("Found potential sort button via fallback dropdown detection")
+                                        break
+                                except:
+                                    continue
+                            if sort_button:
+                                break
+                        except:
+                            continue
+                except Exception as e:
+                    log.debug(f"Error in fallback sort button detection: {e}")
 
             # Final check - do we have a sort button?
             if not sort_button:
@@ -1156,13 +1073,7 @@ class GoogleReviewsScraper:
         sort_by = self.config.get("sort_by", "relevance")
         stop_on_match = self.config.get("stop_on_match", False)
 
-        # Override stop_on_match if translation mode is enabled
-        if self.append_translations or self.force_full_scan:
-            stop_on_match = False
-            log.info("Translation mode enabled - forcing full scan of all reviews")
-
         log.info(f"Starting scraper with settings: headless={headless}, sort_by={sort_by}")
-        log.info(f"Translation mode: append_translations={self.append_translations}, language={self.translation_language}")
         log.info(f"URL: {url}")
 
         # Initialize storage
@@ -1200,27 +1111,13 @@ class GoogleReviewsScraper:
             self.set_sort(driver, sort_by)
 
             # Add a wait after setting sort to allow results to load
-            time.sleep(3)  # Increased wait time for reviews to load
+            time.sleep(1)
 
             # Use try-except to handle cases where the pane is not found
-            pane = None
-            pane_selectors = [
-                PANE_SEL,  # Original selector
-                'div[role="main"]',  # Simpler main container
-                'body',  # Ultimate fallback
-            ]
-            
-            for pane_selector in pane_selectors:
-                try:
-                    pane = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, pane_selector)))
-                    log.info(f"Found scrollable pane using selector: {pane_selector}")
-                    break
-                except TimeoutException:
-                    log.debug(f"Pane selector '{pane_selector}' not found")
-                    continue
-            
-            if not pane:
-                log.warning("Could not find any scrollable pane. Page structure might have changed.")
+            try:
+                pane = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, PANE_SEL)))
+            except TimeoutException:
+                log.warning("Could not find reviews pane. Page structure might have changed.")
                 return False
 
             pbar = tqdm(desc="Scraped", ncols=80, initial=len(seen))
@@ -1237,11 +1134,6 @@ class GoogleReviewsScraper:
 
             max_attempts = 10  # Limit the number of attempts to find reviews
             attempts = 0
-            
-            # In translation mode, track total unique reviews to detect when we stop finding new ones
-            all_review_ids_seen = set()
-            last_unique_count = 0
-            no_new_reviews_count = 0
 
             while attempts < max_attempts:
                 try:
@@ -1250,106 +1142,32 @@ class GoogleReviewsScraper:
 
                     # Check for valid cards
                     if len(cards) == 0:
-                        log.info(f"No review cards found in iteration {attempts + 1} using selector '{CARD_SEL}'")
-                        
-                        # Try alternative selectors
-                        alternative_selectors = [
-                            'div[data-review-id]',
-                            '.jftiEf[data-review-id]',
-                            '[data-review-id]'
-                        ]
-                        
-                        for alt_sel in alternative_selectors:
-                            alt_cards = pane.find_elements(By.CSS_SELECTOR, alt_sel)
-                            log.info(f"Alternative selector '{alt_sel}': Found {len(alt_cards)} cards")
-                            if alt_cards:
-                                cards = alt_cards
-                                break
-                        
-                        if len(cards) == 0:
-                            # If no cards found in pane, try searching the entire page
-                            log.info("No cards found in pane, searching entire page...")
-                            page_cards = driver.find_elements(By.CSS_SELECTOR, 'div[data-review-id]')
-                            log.info(f"Found {len(page_cards)} review cards on entire page")
-                            
-                            if page_cards:
-                                cards = page_cards
-                                log.info("Using review cards found on entire page")
-                            else:
-                                attempts += 1
-                                # Try scrolling anyway
-                                driver.execute_script(scroll_script)
-                                time.sleep(1)
-                                continue
-                    else:
-                        log.info(f"Found {len(cards)} review cards in iteration {attempts + 1}")
+                        log.debug("No review cards found in this iteration")
+                        attempts += 1
+                        # Try scrolling anyway
+                        driver.execute_script(scroll_script)
+                        time.sleep(1)
+                        continue
 
                     for c in cards:
                         try:
                             cid = c.get_attribute("data-review-id")
-                            if not cid:
+                            if not cid or cid in seen or cid in processed_ids:
+                                if stop_on_match and cid and (cid in seen or cid in processed_ids):
+                                    idle = 999
+                                    break
                                 continue
-                            
-                            # In translation mode, process all cards even if seen before
-                            if self.append_translations:
-                                # In translation mode, we process all reviews to add potential translations
-                                # We don't use processed_ids to track, so process all cards
-                                if cid in seen:
-                                    log.debug(f"Translation mode: Processing {cid} again (was seen before, adding translation)")
-                                else:
-                                    log.debug(f"Translation mode: Processing {cid} (new review)")
-                                fresh_cards.append(c)
-                            else:
-                                # Normal mode: skip seen reviews
-                                if cid in seen or cid in processed_ids:
-                                    if stop_on_match and cid and (cid in seen or cid in processed_ids):
-                                        idle = 999
-                                        break
-                                    continue
-                                fresh_cards.append(c)
+                            fresh_cards.append(c)
                         except StaleElementReferenceException:
                             continue
                         except Exception as e:
                             log.debug(f"Error getting review ID: {e}")
                             continue
 
-                    # In translation mode, track all unique review IDs to detect when we've seen all reviews
-                    if self.append_translations:
-                        current_review_ids = set()
-                        for c in cards:
-                            try:
-                                cid = c.get_attribute("data-review-id")
-                                if cid:
-                                    current_review_ids.add(cid)
-                                    all_review_ids_seen.add(cid)
-                            except:
-                                continue
-                        
-                        # Check if we found new unique reviews
-                        current_unique_count = len(all_review_ids_seen)
-                        if current_unique_count == last_unique_count:
-                            no_new_reviews_count += 1
-                            log.info(f"Translation mode: No new reviews found ({no_new_reviews_count}/5) - total unique: {current_unique_count}")
-                        else:
-                            no_new_reviews_count = 0
-                            log.info(f"Translation mode: Found new reviews - total unique: {current_unique_count} (was {last_unique_count})")
-                        
-                        last_unique_count = current_unique_count
-                        
-                        # If we haven't found new reviews for 5 iterations, we're done
-                        if no_new_reviews_count >= 5:
-                            log.info("Translation mode: No new reviews found for 5 iterations - stopping")
-                            break
-
-                    # Log how many fresh cards we found
-                    log.info(f"Found {len(fresh_cards)} fresh cards out of {len(cards)} total cards (translation_mode={self.append_translations})")
-                    
                     for card in fresh_cards:
                         try:
                             raw = RawReview.from_card(card)
-                            # In translation mode, don't add to processed_ids to allow re-processing
-                            if not self.append_translations:
-                                processed_ids.add(raw.id)  # Track this ID to avoid re-processing
+                            processed_ids.add(raw.id)  # Track this ID to avoid re-processing
                         except StaleElementReferenceException:
                             continue
                         except Exception:
@@ -1358,37 +1176,22 @@ class GoogleReviewsScraper:
                             try:
                                 raw_id = card.get_attribute("data-review-id") or ""
                                 raw = RawReview(id=raw_id, text="", lang="und")
-                                # In translation mode, don't add to processed_ids to allow re-processing
-                                if not self.append_translations:
-                                    processed_ids.add(raw_id)
+                                processed_ids.add(raw_id)
                             except StaleElementReferenceException:
                                 continue
 
-                        # Use translation-aware merge if translation mode is enabled
-                        if self.append_translations:
-                            docs[raw.id] = merge_review_with_translation(docs.get(raw.id), raw, append_translations=True)
-                        else:
-                            docs[raw.id] = merge_review(docs.get(raw.id), raw)
+                        docs[raw.id] = merge_review(docs.get(raw.id), raw)
                         seen.add(raw.id)
                         pbar.update(1)
                         idle = 0
                         attempts = 0  # Reset attempts counter when we successfully process a review
 
-                    # In translation mode, be more patient before giving up
-                    max_idle = 10 if self.append_translations else 3
-                    if idle >= max_idle:
-                        log.info(f"Stopping after {max_idle} idle iterations")
+                    if idle >= 3:
                         break
 
                     if not fresh_cards:
                         idle += 1
                         attempts += 1
-                        # In translation mode, log why we're not finding fresh cards
-                        if self.append_translations:
-                            log.debug(f"No fresh cards in translation mode - idle: {idle}/{max_idle}, attempts: {attempts}")
-                    else:
-                        # Reset idle counter when we have fresh cards
-                        idle = 0
 
                     # Use JavaScript for smoother scrolling
                     try:
@@ -1476,7 +1279,7 @@ class GoogleReviewsScraper:
 # from tqdm import tqdm
 #
 # from modules.models import RawReview
-# from modules.data_storage import MongoDBStorage, JSONStorage, merge_review, merge_review_with_translation
+# from modules.data_storage import MongoDBStorage, JSONStorage, merge_review
 #
 # # Logger
 # log = logging.getLogger("scraper")
@@ -1939,7 +1742,7 @@ class GoogleReviewsScraper:
 # # from tqdm import tqdm
 # #
 # # from modules.models import RawReview
-# # from modules.data_storage import MongoDBStorage, JSONStorage, merge_review, merge_review_with_translation
+# # from modules.data_storage import MongoDBStorage, JSONStorage, merge_review
 # # from modules.utils import click_if
 # #
 # # # Logger
