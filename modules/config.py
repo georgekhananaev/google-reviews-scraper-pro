@@ -8,8 +8,10 @@ from typing import Dict, Any
 
 import yaml
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
+# Configure logging - can be overridden by environment variable
+import os
+log_level = getattr(logging, os.environ.get('LOG_LEVEL', 'INFO').upper(), logging.INFO)
+logging.basicConfig(level=log_level, format="[%(asctime)s] %(levelname)s: %(message)s")
 log = logging.getLogger("scraper")
 
 # Default configuration path

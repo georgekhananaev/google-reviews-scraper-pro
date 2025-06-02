@@ -317,3 +317,33 @@ def merge_review(existing: Dict[str, Any] | None, raw: RawReview) -> Dict[str, A
     existing["last_modified_date"] = get_current_iso_date()
 
     return existing
+
+
+def merge_review_with_translation(existing: Dict[str, Any] | None, raw: RawReview, append_translations: bool = False) -> Dict[str, Any]:
+    """
+    Enhanced merge function that supports translation mode.
+    When append_translations is True, it adds new language versions to existing reviews.
+    """
+    # Use the standard merge for the base functionality
+    merged = merge_review(existing, raw)
+    
+    if append_translations and existing and raw.text:
+        # In translation mode, always add the new language version
+        # even if we already have content for this review
+        merged["description"][raw.lang] = raw.text
+        
+        # Also merge owner responses in translation mode
+        if raw.owner_text:
+            owner_lang = detect_lang(raw.owner_text)
+            merged.setdefault("owner_responses", {})[owner_lang] = {
+                "text": raw.owner_text,
+            }
+        
+        # Add metadata about when this translation was added
+        merged.setdefault("translation_history", []).append({
+            "language": raw.lang,
+            "added_date": get_current_iso_date(),
+            "source": "regional_scraping"
+        })
+    
+    return merged

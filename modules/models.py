@@ -27,6 +27,9 @@ class RawReview:
     owner_date: str = ""
     owner_text: str = ""
     review_date: str = ""  # ISO format date
+    
+    # Translation fields
+    translations: dict = field(default_factory=dict)  # Store translations by language code
 
     # CSS Selectors for review elements
     MORE_BTN = "button.kyuRq"
