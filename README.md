@@ -18,6 +18,7 @@
   - Snags EVERY damn photo from reviews and profiles
   - Hoards local paths or swaps URLs to your domain like a boss
   - Multi-threaded downloading that would make NASA jealous
+  - **S3 Cloud Storage**: Auto-upload images to AWS S3 with custom folder structure
 - **Time-Bending Magic**: Transforms Google's vague "2 weeks ago" garbage into precise ISO timestamps
 - **Sort Any Damn Way**: Newest, highest, lowest, relevance - we've got you covered
 - **Metadata on Steroids**: Inject custom parameters into every review record
@@ -32,6 +33,7 @@
 Python 3.10+ (don't even try with 3.9, seriously)
 Chrome browser (the fresher the better)
 MongoDB (optional, but c'mon, live a little)
+AWS S3 Account (optional, for cloud image storage)
 Coffee (mandatory for watching thousands of reviews roll in)
 ```
 
@@ -94,6 +96,19 @@ image_dir: "review_images"    # Directory to store downloaded images
 download_threads: 4           # Number of threads for downloading images
 store_local_paths: true       # Whether to store local image paths in documents
 
+# S3 settings (optional)
+use_s3: false                 # Whether to upload images to S3
+s3:
+  aws_access_key_id: ""       # AWS Access Key ID
+  aws_secret_access_key: ""   # AWS Secret Access Key
+  region_name: "us-east-1"    # AWS region
+  bucket_name: ""             # S3 bucket name
+  prefix: "reviews/"          # Base prefix for uploaded files
+  profiles_folder: "profiles/"    # Folder name for profile images within prefix
+  reviews_folder: "reviews/"      # Folder name for review images within prefix
+  delete_local_after_upload: false  # Delete local files after successful S3 upload
+  s3_base_url: ""             # Custom S3 base URL for accessing files (if empty, uses AWS default)
+
 # URL replacement settings
 replace_urls: true           # Whether to replace original URLs with custom ones
 custom_url_base: "https://yourdomain.com/images"  # Base URL for replacement
@@ -148,6 +163,12 @@ python start.py --url "https://maps.app.goo.gl/YOUR_URL" --custom-params '{"comp
 ```bash
 python start.py --url "https://maps.app.goo.gl/YOUR_URL" --download-images true --replace-urls true --custom-url-base "https://yourdomain.com/images"
 # Every. Single. Picture. With your domain stamped all over 'em.
+```
+
+6. S3 Cloud Storage Beast Mode:
+```bash
+python start.py --url "https://maps.app.goo.gl/YOUR_URL" --download-images true --use-s3 true
+# Downloads locally AND uploads to S3. Best of both worlds, baby!
 ```
 
 ### Command Line Arguments
@@ -243,6 +264,7 @@ When running with default settings, the scraper creates:
 3. `review_images/` - Directory containing downloaded images:
    - `review_images/profiles/` - Profile pictures
    - `review_images/reviews/` - Review images
+4. **S3 Bucket** (when enabled) - Images uploaded to your configured S3 bucket with custom folder structure
 
 ## 🔄 Integration Examples
 
@@ -304,6 +326,12 @@ print(f"Reviews with images: {len(reviews_with_images)}")
    - Run with `sudo` if you're getting permission errors (not ideal but gets the job done)
    - Some images vanish from Google's CDN faster than your ex. Nothing we can do about that.
 
+5. **S3 Upload Chaos**
+   - Double-check your AWS credentials and bucket permissions
+   - Make sure your bucket exists and is in the specified region
+   - Check if your bucket policy allows public-read for uploaded objects
+   - AWS charges for every API call, so don't go crazy with test uploads
+
 ### Operation Logs (AKA "What The Hell Is It Doing?")
 
 We don't just log, we OBSESSIVELY document the scraper's every breath:
@@ -353,11 +381,129 @@ A: Damn straight. We've pulled 50k+ reviews without breaking a sweat. The MongoD
 **Q: I found a bug/have a killer feature idea!**  
 A: Jump on GitHub and file an issue or PR. But do your homework first – if you're reporting something already in the README, we'll roast you publicly.
 
+## ☁️ AWS S3 Setup Guide
+
+Want to store your images in the cloud like a boss? Here's how to set up S3 integration:
+
+### 1. Create an S3 Bucket
+
+1. Log into [AWS Console](https://console.aws.amazon.com/s3/)
+2. Click "Create bucket"
+3. Choose a unique bucket name (e.g., `your-company-reviews`)
+4. Select your preferred region
+5. **Important**: Under "Block public access settings" - UNCHECK "Block all public access" if you want images to be publicly accessible
+6. Create the bucket
+
+### 2. Set Bucket Permissions
+
+For public image access, add this bucket policy (replace `your-bucket-name`):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PublicReadGetObject",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::your-bucket-name/*"
+    }
+  ]
+}
+```
+
+### 3. Create IAM User for API Access
+
+1. Go to [IAM Console](https://console.aws.amazon.com/iam/)
+2. Create a new user with programmatic access
+3. Attach this policy (replace `your-bucket-name`):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectAcl",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::your-bucket-name/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::your-bucket-name"
+    }
+  ]
+}
+```
+
+4. Save the Access Key ID and Secret Access Key
+
+### 4. Configure Your Scraper
+
+Update your `config.yaml`:
+
+```yaml
+use_s3: true
+s3:
+  aws_access_key_id: "YOUR_ACCESS_KEY_ID"
+  aws_secret_access_key: "YOUR_SECRET_ACCESS_KEY"
+  region_name: "us-east-1"  # Match your bucket region
+  bucket_name: "your-bucket-name"
+  prefix: "google_reviews/"
+  profiles_folder: "profiles/"
+  reviews_folder: "reviews/"
+  delete_local_after_upload: false  # Keep local copies
+  s3_base_url: ""  # Leave empty for default AWS URLs
+```
+
+### 5. Test Your Setup
+
+Run the included tests to verify everything works:
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Test S3 connection
+pytest tests/test_s3_connection.py -v
+```
+
+### 6. Folder Structure
+
+Your S3 bucket will organize images like this:
+```
+your-bucket/
+├── google_reviews/
+│   ├── profiles/
+│   │   ├── user123.jpg
+│   │   └── user456.jpg
+│   └── reviews/
+│       ├── review789.jpg
+│       └── review101.jpg
+```
+
+### Pro Tips:
+
+- **Cost Optimization**: Enable S3 Intelligent Tiering for automatic cost savings
+- **CDN**: Add CloudFront distribution for faster global image delivery
+- **Security**: Use IAM roles instead of hardcoded keys in production
+- **Monitoring**: Enable S3 access logging to track usage
+
 ## 🌐 Links
 
 - [Python Documentation](https://docs.python.org/3/)
 - [Selenium Documentation](https://selenium-python.readthedocs.io/)
 - [MongoDB Documentation](https://docs.mongodb.com/)
+- [AWS S3 Documentation](https://docs.aws.amazon.com/s3/)
+- [Boto3 Documentation](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html)
 
 ---
 

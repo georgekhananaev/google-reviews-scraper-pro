@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from modules.s3_handler import S3Handler
+
 # Logger
 log = logging.getLogger("scraper")
 
@@ -34,6 +36,10 @@ class ImageHandler:
         # Subdirectories for different image types
         self.profile_dir = self.image_dir / "profiles"
         self.review_dir = self.image_dir / "reviews"
+        
+        # Initialize S3 handler
+        self.s3_handler = S3Handler(config)
+        self.use_s3 = config.get("use_s3", False)
 
     def ensure_directories(self):
         """Ensure all image directories exist"""
@@ -206,6 +212,31 @@ class ImageHandler:
                 if custom_url:
                     url_to_custom_url[url] = custom_url
 
+        # Upload to S3 if enabled
+        s3_url_mapping = {}
+        if self.use_s3 and self.s3_handler.enabled and url_to_filename:
+            log.info("Uploading images to S3...")
+            
+            # Prepare files for S3 upload
+            files_to_upload = {}
+            for url, filename in url_to_filename.items():
+                # Determine if it's a profile image
+                is_profile = any(url == profile_url for profile_url in profile_urls)
+                
+                # Get local file path
+                local_path = (self.profile_dir if is_profile else self.review_dir) / filename
+                
+                if local_path.exists():
+                    files_to_upload[filename] = (local_path, is_profile)
+            
+            # Upload to S3
+            s3_results = self.s3_handler.upload_images_batch(files_to_upload)
+            
+            # Create mapping from original URL to S3 URL
+            for url, filename in url_to_filename.items():
+                if filename in s3_results:
+                    s3_url_mapping[url] = s3_results[filename]
+
         # Update review documents
         for review_id, review in reviews.items():
             # Find the original URLs to use for lookup - important for both user_images and profile_picture
@@ -241,7 +272,10 @@ class ImageHandler:
                     # Create custom URLs for each image
                     custom_images = []
                     for url in user_images_original:
-                        if url in url_to_custom_url:
+                        # Prefer S3 URL if available
+                        if url in s3_url_mapping:
+                            custom_images.append(s3_url_mapping[url])
+                        elif url in url_to_custom_url:
                             custom_images.append(url_to_custom_url[url])
                         elif not self.is_not_custom_url(url):  # Already a custom URL
                             custom_images.append(url)
@@ -262,8 +296,10 @@ class ImageHandler:
                     if self.preserve_original_urls and "original_profile_picture" not in review:
                         review["original_profile_picture"] = review["profile_picture"]
 
-                    # Replace with custom URL if we have one for this profile image
-                    if profile_picture_original in url_to_custom_url:
+                    # Replace with S3 URL if available, otherwise use custom URL
+                    if profile_picture_original in s3_url_mapping:
+                        review["profile_picture"] = s3_url_mapping[profile_picture_original]
+                    elif profile_picture_original in url_to_custom_url:
                         review["profile_picture"] = url_to_custom_url[profile_picture_original]
                     elif not self.is_not_custom_url(review["profile_picture"]):
                         # If current URL is already a custom URL, keep it
@@ -277,7 +313,10 @@ class ImageHandler:
                                 review["profile_picture"] = custom_url
 
         log.info(f"Downloaded {len(url_to_filename)} images")
+        if self.use_s3 and s3_url_mapping:
+            log.info(f"Uploaded {len(s3_url_mapping)} images to S3")
         if self.replace_urls:
-            log.info(f"Replaced URLs for {len(url_to_custom_url)} images")
+            total_replaced = len(s3_url_mapping) + len(url_to_custom_url)
+            log.info(f"Replaced URLs for {total_replaced} images")
 
         return reviews

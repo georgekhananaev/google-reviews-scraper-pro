@@ -10,3 +10,5 @@ pyyaml==6.0.1
 certifi==2024.7.4
 webdriver-manager==4.0.2
 setuptools==79.0.1
+boto3==1.35.1
+pytest==7.4.3
