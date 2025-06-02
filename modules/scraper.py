@@ -585,6 +585,7 @@ class GoogleReviewsScraper:
                             # Get button text and attributes for verification
                             button_text = element.text.strip() if element.text else ""
                             button_aria = element.get_attribute("aria-label") or ""
+                            button_class = element.get_attribute("class") or ""
 
                             # Skip buttons that are clearly not sort buttons
                             negative_keywords = ["back", "next", "previous", "close", "cancel", "חזרה", "סגור", "ปิด"]
@@ -592,11 +593,24 @@ class GoogleReviewsScraper:
                                    for keyword in negative_keywords):
                                 continue
 
-                            # Found a potential sort button
-                            sort_button = element
-                            log.info(f"Found sort button with selector: {selector}")
-                            log.info(f"Button text: '{button_text}', aria-label: '{button_aria}'")
-                            break
+                            # Positive detection for sort buttons
+                            sort_keywords = ["sort", "Sort", "SORT", "סידור", "เรียง", "排序", "trier", "ordenar", "sortieren"]
+                            has_sort_keyword = any(keyword in button_text or keyword in button_aria 
+                                                 for keyword in sort_keywords)
+                            
+                            # Check for common sort button classes
+                            has_sort_class = "HQzyZ" in button_class or "sort" in button_class.lower()
+                            
+                            # Check for aria attributes that indicate a dropdown
+                            has_dropdown_attrs = (element.get_attribute("aria-haspopup") == "true" or
+                                                element.get_attribute("aria-expanded") is not None)
+
+                            if has_sort_keyword or has_sort_class or has_dropdown_attrs:
+                                # Found a potential sort button
+                                sort_button = element
+                                log.info(f"Found sort button with selector: {selector}")
+                                log.info(f"Button text: '{button_text}', aria-label: '{button_aria}'")
+                                break
                         except Exception as e:
                             log.debug(f"Error checking element: {e}")
                             continue
@@ -647,6 +661,32 @@ class GoogleReviewsScraper:
                             break
                     except:
                         continue
+            
+            # Final fallback: look for any button in the reviews area that might open a dropdown
+            if not sort_button:
+                try:
+                    # Look specifically in the reviews container area
+                    reviews_container = driver.find_elements(By.CSS_SELECTOR, 'div.m6QErb, div.DxyBCb')
+                    for container in reviews_container:
+                        try:
+                            # Find all buttons in this container
+                            buttons = container.find_elements(By.TAG_NAME, 'button')
+                            for button in buttons:
+                                try:
+                                    if (button.is_displayed() and button.is_enabled() and
+                                        (button.get_attribute("aria-haspopup") == "true" or
+                                         "dropdown" in (button.get_attribute("class") or "").lower())):
+                                        sort_button = button
+                                        log.info("Found potential sort button via fallback dropdown detection")
+                                        break
+                                except:
+                                    continue
+                            if sort_button:
+                                break
+                        except:
+                            continue
+                except Exception as e:
+                    log.debug(f"Error in fallback sort button detection: {e}")
 
             # Final check - do we have a sort button?
             if not sort_button:
