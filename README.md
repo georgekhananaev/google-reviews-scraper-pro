@@ -19,6 +19,7 @@
   - Hoards local paths or swaps URLs to your domain like a boss
   - Multi-threaded downloading that would make NASA jealous
   - **S3 Cloud Storage**: Auto-upload images to AWS S3 with custom folder structure
+- **REST API Server**: Trigger scraping jobs via HTTP endpoints with background processing
 - **Time-Bending Magic**: Transforms Google's vague "2 weeks ago" garbage into precise ISO timestamps
 - **Sort Any Damn Way**: Newest, highest, lowest, relevance - we've got you covered
 - **Metadata on Steroids**: Inject custom parameters into every review record
@@ -126,12 +127,53 @@ custom_params:
 
 ## 🖥️ Unleashing Hell
 
-### No-Frills, Get-It-Done Usage
+### Command Line Usage
 
 ```bash
 python start.py --url "https://maps.app.goo.gl/YOUR_URL"
 # Boom. That's it. Now go grab a coffee while the magic happens.
 ```
+
+### 🚀 API Server Mode (NEW!)
+
+Want to trigger scraping jobs via REST API? We've got you covered:
+
+```bash
+# Start the API server
+python api_server.py
+# Server runs on http://localhost:8000
+```
+
+#### API Endpoints:
+
+**Start a scraping job:**
+```bash
+curl -X POST "http://localhost:8000/scrape" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://maps.app.goo.gl/YOUR_URL",
+    "headless": true,
+    "sort_by": "newest",
+    "download_images": true
+  }'
+```
+
+**Check job status:**
+```bash
+curl "http://localhost:8000/jobs/{job_id}"
+```
+
+**List all jobs:**
+```bash
+curl "http://localhost:8000/jobs"
+```
+
+**Get job statistics:**
+```bash
+curl "http://localhost:8000/stats"
+```
+
+**Interactive API docs available at:** `http://localhost:8000/docs`
 
 ### Battle-Tested Recipes
 
