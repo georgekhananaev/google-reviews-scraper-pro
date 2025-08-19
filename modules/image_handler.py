@@ -3,7 +3,6 @@ Image downloading and handling for Google Maps Reviews Scraper.
 """
 
 import logging
-import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Any, Set, Tuple
@@ -25,6 +24,10 @@ class ImageHandler:
         self.image_dir = Path(config.get("image_dir", "review_images"))
         self.max_workers = config.get("download_threads", 4)
         self.store_local_paths = config.get("store_local_paths", True)
+        
+        # Image dimension settings
+        self.max_width = config.get("max_width", 1200)
+        self.max_height = config.get("max_height", 1200)
 
         # URL replacement settings
         self.replace_urls = config.get("replace_urls", False)
@@ -134,7 +137,23 @@ class ImageHandler:
                 return url, filename, custom_url
 
             # Download the image
-            url = url.split("=")[0]
+            # For Google images, modify resolution parameters
+            if 'googleusercontent.com' in url or 'ggpht.com' in url or 'gstatic.com' in url:
+                # Check if URL already has size parameters (=w... or =h... or =s...)
+                if '=w' in url or '=h' in url or '=s' in url:
+                    # Remove existing size parameters
+                    # Split at = to get base URL and parameters
+                    parts = url.split('=')
+                    base_url = parts[0]
+                    # Rebuild with configurable resolution parameters (using -no suffix)
+                    url = base_url + f"=w{self.max_width}-h{self.max_height}-no"
+                else:
+                    # No existing size parameters, just append them
+                    url = url + f"=w{self.max_width}-h{self.max_height}-no"
+            else:
+                # For non-Google URLs, just remove parameters after =
+                url = url.split("=")[0]
+            
             response = requests.get(url, stream=True, timeout=10)
             response.raise_for_status()
 

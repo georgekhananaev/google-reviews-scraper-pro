@@ -96,6 +96,8 @@ download_images: true         # Download images from reviews
 image_dir: "review_images"    # Directory to store downloaded images
 download_threads: 4           # Number of threads for downloading images
 store_local_paths: true       # Whether to store local image paths in documents
+max_width: 1200               # Maximum width for downloaded images (Google images)
+max_height: 1200              # Maximum height for downloaded images (Google images)
 
 # S3 settings (optional)
 use_s3: false                 # Whether to upload images to S3
