@@ -71,14 +71,14 @@ class ImageHandler:
             # Extract unique identifier from profile URL
             parts = url.split('/')
             if len(parts) > 1:
-                filename = parts[-2] if parts[-1] in ('', 'w72-h72-p-rp-mo-ba4-br100') else parts[-1]
+                filename = parts[-2] if parts[-1] == '' else parts[-1]
+                filename = filename.split('=')[0]
                 return f"{filename}.jpg"
 
         # For review images
-        match = re.search(r'AIHoz[^=]+=', url)
-        if match:
-            # Use the ID as filename
-            return f"{match.group(0).rstrip('=')}w600-h450-p.jpg"
+        url = url.split('=')[0]
+        filename = url.split('/')[-1]
+        return f"{filename}.jpg"
 
         # Fallback to using the last part of the URL path
         parsed = urlparse(url)
@@ -134,6 +134,7 @@ class ImageHandler:
                 return url, filename, custom_url
 
             # Download the image
+            url = url.split("=")[0]
             response = requests.get(url, stream=True, timeout=10)
             response.raise_for_status()
 
