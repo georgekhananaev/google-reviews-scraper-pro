@@ -230,7 +230,9 @@ class GoogleReviewsScraper:
         else:
             # On regular OS, use default undetected_chromedriver
             log.info("Using standard undetected_chromedriver setup")
-            driver = uc.Chrome(options=opts)
+            # Use version_main to match the installed Chrome version (141)
+            # Set to None to auto-detect, or specify explicitly like version_main=141
+            driver = uc.Chrome(options=opts, version_main=141, use_subprocess=True)
 
         # Set page load timeout to avoid hanging
         driver.set_page_load_timeout(30)
