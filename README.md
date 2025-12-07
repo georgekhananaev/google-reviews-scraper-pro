@@ -1,16 +1,16 @@
 # 🔥 Google Reviews Scraper Pro (2025) 🔥
 
-![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.0.0-brightgreen)
+![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.0.1-brightgreen)
 ![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
-![Last Update](https://img.shields.io/badge/Last%20Updated-April%202025-red)
+![Last Update](https://img.shields.io/badge/Last%20Updated-December%202025-red)
 
 **FINALLY! A scraper that ACTUALLY WORKS in 2025!** While others break with every Google update, this bad boy keeps on trucking. Say goodbye to the frustration of constantly broken scrapers and hello to a beast that rips through Google's defenses like a hot knife through butter. This battle-tested, rock-solid solution will extract every juicy detail from Google reviews while laughing in the face of rate limiting.
 
 ## 🌟 Feature Artillery
 
 - **Bulletproof in 2025**: While the competition falls apart, we've cracked Google's latest tricks
-- **Ninja-Mode Selenium**: Our undetected-chromedriver flies under the radar where others get insta-blocked
+- **Enhanced SeleniumBase UC Mode**: Superior anti-detection with automatic Chrome/ChromeDriver version matching - no more version headaches!
 - **Polyglot Powerhouse**: Devours reviews in a smorgasbord of languages - English, Hebrew, Thai, German, you name it!
 - **MongoDB Mastery**: Dumps pristine data structures straight into your MongoDB instance
 - **Paranoid Backups**: Mirrors everything to local JSON files because losing data sucks
@@ -350,9 +350,10 @@ print(f"Reviews with images: {len(reviews_with_images)}")
 ### DEFCON Scenarios & Quick Fixes
 
 1. **Chrome/Driver Having a Lovers' Quarrel**
-   - Update your damn Chrome browser already! It's 2025, people
-   - Nuke and reinstall the driver: `pip uninstall undetected-chromedriver` then `pip install undetected-chromedriver==3.5.4`
-   - If you're on Ubuntu, sometimes a simple `apt update && apt upgrade` fixes weird Chrome issues
+   - **Good news!** SeleniumBase handles Chrome/ChromeDriver version matching automatically
+   - Update Chrome browser: Go to chrome://settings/help
+   - SeleniumBase will automatically download the matching ChromeDriver - no manual intervention needed!
+   - If issues persist: `pip install --upgrade seleniumbase`
 
 2. **MongoDB Throwing a Tantrum**
    - Double-check your connection string - typos are the #1 culprit

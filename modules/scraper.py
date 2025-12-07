@@ -1,5 +1,6 @@
 """
 Selenium scraping logic for Google Maps Reviews.
+Uses SeleniumBase UC Mode for enhanced anti-detection and better Chrome version management.
 """
 
 import logging
@@ -10,7 +11,7 @@ import time
 import traceback
 from typing import Dict, Any, List
 
-import undetected_chromedriver as uc
+from seleniumbase import Driver
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
 from selenium.webdriver import Chrome
 from selenium.webdriver.common.action_chains import ActionChains
@@ -169,72 +170,87 @@ class GoogleReviewsScraper:
         self.backup_to_json = config.get("backup_to_json", True)
         self.overwrite_existing = config.get("overwrite_existing", False)
 
-    def setup_driver(self, headless: bool) -> Chrome:
+    def setup_driver(self, headless: bool):
         """
-        Set up and configure Chrome driver with flexibility for different environments.
+        Set up and configure Chrome driver using SeleniumBase UC Mode.
+        SeleniumBase provides enhanced anti-detection and automatic Chrome/ChromeDriver version management.
         Works in both Docker containers and on regular OS installations (Windows, Mac, Linux).
         """
-        # Determine if we're running in a container
-        in_container = os.environ.get('CHROME_BIN') is not None
-
-        # Create Chrome options
-        opts = uc.ChromeOptions()
-        opts.add_argument("--window-size=1400,900")
-        opts.add_argument("--ignore-certificate-errors")
-        opts.add_argument("--disable-gpu")  # Improves performance
-        opts.add_argument("--disable-dev-shm-usage")  # Helps with stability
-        opts.add_argument("--no-sandbox")  # More stable in some environments
-
-        # Use headless mode if requested
-        if headless:
-            opts.add_argument("--headless=new")
-
         # Log platform information for debugging
         log.info(f"Platform: {platform.platform()}")
         log.info(f"Python version: {platform.python_version()}")
+        log.info("Using SeleniumBase UC Mode for enhanced anti-detection")
 
-        # If in container, use environment-provided binaries
+        # Determine if we're running in a container
+        in_container = os.environ.get('CHROME_BIN') is not None
+
         if in_container:
             chrome_binary = os.environ.get('CHROME_BIN')
-            chromedriver_path = os.environ.get('CHROMEDRIVER_PATH')
-
             log.info(f"Container environment detected")
             log.info(f"Chrome binary: {chrome_binary}")
-            log.info(f"ChromeDriver path: {chromedriver_path}")
 
+            # Create driver with custom binary location for containers
             if chrome_binary and os.path.exists(chrome_binary):
-                log.info(f"Using Chrome binary from environment: {chrome_binary}")
-                opts.binary_location = chrome_binary
-
-            try:
-                # Try creating Chrome driver with undetected_chromedriver
-                log.info("Attempting to create undetected_chromedriver instance")
-                driver = uc.Chrome(options=opts)
-                log.info("Successfully created undetected_chromedriver instance")
-            except Exception as e:
-                # Fall back to regular Selenium if undetected_chromedriver fails
-                log.warning(f"Failed to create undetected_chromedriver instance: {e}")
-                log.info("Falling back to regular Selenium Chrome")
-
-                # Import Selenium webdriver here to avoid potential import issues
-                from selenium import webdriver
-                from selenium.webdriver.chrome.service import Service
-
-                if chromedriver_path and os.path.exists(chromedriver_path):
-                    log.info(f"Using ChromeDriver from path: {chromedriver_path}")
-                    service = Service(executable_path=chromedriver_path)
-                    driver = webdriver.Chrome(service=service, options=opts)
-                else:
-                    log.info("Using default ChromeDriver")
-                    driver = webdriver.Chrome(options=opts)
+                try:
+                    driver = Driver(
+                        uc=True,
+                        headless=headless,
+                        binary_location=chrome_binary,
+                        page_load_strategy="normal"
+                    )
+                    log.info("Successfully created SeleniumBase UC driver with custom binary")
+                except Exception as e:
+                    log.warning(f"Failed to create driver with custom binary: {e}")
+                    # Fall back to default
+                    driver = Driver(
+                        uc=True,
+                        headless=headless,
+                        page_load_strategy="normal"
+                    )
+                    log.info("Successfully created SeleniumBase UC driver with defaults")
+            else:
+                driver = Driver(
+                    uc=True,
+                    headless=headless,
+                    page_load_strategy="normal"
+                )
+                log.info("Successfully created SeleniumBase UC driver")
         else:
-            # On regular OS, use default undetected_chromedriver
-            log.info("Using standard undetected_chromedriver setup")
-            driver = uc.Chrome(options=opts)
+            # Regular OS environment - SeleniumBase handles version matching automatically
+            log.info("Creating SeleniumBase UC Mode driver")
+            try:
+                driver = Driver(
+                    uc=True,
+                    headless=headless,
+                    page_load_strategy="normal",
+                    incognito=True  # Use incognito mode for better stealth
+                )
+                log.info("Successfully created SeleniumBase UC driver")
+            except Exception as e:
+                log.error(f"Failed to create SeleniumBase driver: {e}")
+                raise
 
         # Set page load timeout to avoid hanging
         driver.set_page_load_timeout(30)
-        log.info("Chrome driver setup completed successfully")
+
+        # Set window size
+        driver.set_window_size(1400, 900)
+
+        # Add additional stealth settings
+        try:
+            # Disable automation flags
+            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                'source': '''
+                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                    Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                '''
+            })
+            log.info("Additional stealth settings applied")
+        except Exception as e:
+            log.debug(f"Could not apply additional stealth settings: {e}")
+
+        log.info("SeleniumBase UC driver setup completed successfully")
         return driver
 
     def dismiss_cookies(self, driver: Chrome):
@@ -471,9 +487,11 @@ class GoogleReviewsScraper:
                         parts = current_url.split('/place/')
                         new_url = f"{parts[0]}/place/{parts[1].split('/')[0]}/reviews?hl={lang_code}"
                         driver.get(new_url)
-                        time.sleep(2)
+                        time.sleep(3)  # Increased wait time for page load
                         if "review" in driver.current_url.lower():
                             log.info("Navigated directly to reviews page via URL")
+                            # Extra wait for reviews to render after URL navigation
+                            time.sleep(2)
                             return True
 
             # Try to identify reviews link in URL
@@ -481,9 +499,11 @@ class GoogleReviewsScraper:
                 parts = current_url.split('/place/')
                 new_url = f"{parts[0]}/place/{parts[1].split('/')[0]}/reviews"
                 driver.get(new_url)
-                time.sleep(2)
+                time.sleep(3)  # Increased wait time for page load
                 if "review" in driver.current_url.lower():
                     log.info("Navigated directly to reviews page via URL")
+                    # Extra wait for reviews to render after URL navigation
+                    time.sleep(2)
                     return True
         except Exception as url_error:
             log.warning(f"Failed to navigate to reviews via URL: {url_error}")
@@ -831,34 +851,37 @@ class GoogleReviewsScraper:
                 target_item = None
                 matched_text = None
 
-                # 1. First try direct text matching
-                wanted_labels = SORT_OPTIONS.get(method, [])
+                # Log all available menu items for debugging
+                log.info(f"Available menu items: {[text for _, text in visible_items]}")
 
-                for item, text in visible_items:
+                # Use position-based selection (most reliable for Google Maps)
+                position_map = {
+                    "relevance": 0,  # Usually the first option
+                    "newest": 1,  # Usually the second option
+                    "highest": 2,  # Usually the third option
+                    "lowest": 3  # Usually the fourth option
+                }
+
+                pos = position_map.get(method, -1)
+                if pos >= 0 and pos < len(visible_items):
+                    target_item, matched_text = visible_items[pos]
+                    log.info(f"Selected menu item at position {pos + 1}: '{matched_text}' for sort method '{method}'")
+
+                    # Validate the selection makes sense
+                    wanted_labels = SORT_OPTIONS.get(method, [])
+                    text_clean = matched_text.lower()
+
+                    # Check if selected text contains any of the expected keywords
+                    valid_selection = False
                     for label in wanted_labels:
-                        if (label in text or text in label or
-                                (len(text) > 0 and len(label) > 0 and
-                                 text.lower().startswith(label.lower()[:3]))):
-                            target_item = item
-                            matched_text = text
-                            log.info(f"Found matching menu item: '{text}' for '{label}'")
+                        if label.lower() in text_clean or text_clean in label.lower():
+                            valid_selection = True
                             break
-                    if target_item:
-                        break
 
-                # 2. If no match found, try position-based selection
-                if not target_item and visible_items:
-                    position_map = {
-                        "relevance": 0,  # Usually the first option
-                        "newest": 1,  # Usually the second option
-                        "highest": 2,  # Usually the third option
-                        "lowest": 3  # Usually the fourth option
-                    }
-
-                    pos = position_map.get(method, -1)
-                    if pos >= 0 and pos < len(visible_items):
-                        target_item, matched_text = visible_items[pos]
-                        log.info(f"Using position-based selection (position {pos}) for '{method}'")
+                    if not valid_selection:
+                        log.warning(f"WARNING: Selected '{matched_text}' doesn't match expected '{method}' - might be wrong sort!")
+                else:
+                    log.warning(f"Position {pos} not available in menu (only {len(visible_items)} items)")
 
                 # 3. If target found, click it
                 if target_item:
@@ -1108,16 +1131,55 @@ class GoogleReviewsScraper:
 
             self.dismiss_cookies(driver)
             self.click_reviews_tab(driver)
-            self.set_sort(driver, sort_by)
 
-            # Add a wait after setting sort to allow results to load
-            time.sleep(1)
+            # Extra wait after clicking reviews tab to ensure page loads
+            log.info("Waiting for reviews page to fully load...")
+            time.sleep(3)
+
+            # Wait for page to be fully interactive
+            try:
+                wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+                log.info("Page DOM is ready")
+            except:
+                log.debug("Could not verify page ready state")
+
+            # Verify we're on a reviews page before proceeding
+            if "review" not in driver.current_url.lower():
+                log.warning("URL doesn't contain 'review' - might not be on reviews page")
+
+            # Try to set sort - but don't fail if it doesn't work
+            try:
+                self.set_sort(driver, sort_by)
+            except Exception as sort_error:
+                log.warning(f"Sort failed but continuing: {sort_error}")
+
+            # Add a longer wait after setting sort to allow results to load
+            log.info("Waiting for reviews to render...")
+            time.sleep(3)
 
             # Use try-except to handle cases where the pane is not found
-            try:
-                pane = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, PANE_SEL)))
-            except TimeoutException:
-                log.warning("Could not find reviews pane. Page structure might have changed.")
+            # Try multiple selectors for the reviews pane
+            pane = None
+            pane_selectors = [
+                PANE_SEL,  # Primary selector
+                'div[role="main"] div.m6QErb',  # Simplified version
+                'div.m6QErb.DxyBCb',  # Even more simplified
+                'div[role="main"]'  # Most generic
+            ]
+
+            for selector in pane_selectors:
+                try:
+                    log.info(f"Trying to find reviews pane with selector: {selector}")
+                    pane = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+                    if pane:
+                        log.info(f"Found reviews pane with selector: {selector}")
+                        break
+                except TimeoutException:
+                    log.debug(f"Pane not found with selector: {selector}")
+                    continue
+
+            if not pane:
+                log.warning("Could not find reviews pane with any selector. Page structure might have changed.")
                 return False
 
             pbar = tqdm(desc="Scraped", ncols=80, initial=len(seen))
@@ -1132,8 +1194,12 @@ class GoogleReviewsScraper:
                 log.warning(f"Error setting up scroll script: {e}")
                 scroll_script = "window.scrollBy(0, 300);"  # Fallback to simple scrolling
 
-            max_attempts = 10  # Limit the number of attempts to find reviews
+            max_attempts = 50  # Increased from 10 to 50 for very patient scrolling
             attempts = 0
+            max_idle = 15  # Increased from 3 to 15 - much more patience for lazy-loaded reviews
+            consecutive_no_cards = 0  # Track how many times we find zero cards
+            last_scroll_position = 0
+            scroll_stuck_count = 0
 
             while attempts < max_attempts:
                 try:
@@ -1142,12 +1208,23 @@ class GoogleReviewsScraper:
 
                     # Check for valid cards
                     if len(cards) == 0:
-                        log.debug("No review cards found in this iteration")
+                        consecutive_no_cards += 1
+                        log.info(f"No review cards found in this iteration (consecutive: {consecutive_no_cards})")
+
+                        # If we keep finding no cards, might have hit the end
+                        if consecutive_no_cards > 5:
+                            log.warning("No cards found for 5+ iterations - might be at end of reviews")
+                            break
+
                         attempts += 1
-                        # Try scrolling anyway
+                        # Try aggressive scrolling
                         driver.execute_script(scroll_script)
                         time.sleep(1)
+                        driver.execute_script("window.scrollBy(0, 1000);")  # Extra scroll
+                        time.sleep(1.5)
                         continue
+                    else:
+                        consecutive_no_cards = 0  # Reset counter when we find cards
 
                     for c in cards:
                         try:
@@ -1186,12 +1263,48 @@ class GoogleReviewsScraper:
                         idle = 0
                         attempts = 0  # Reset attempts counter when we successfully process a review
 
-                    if idle >= 3:
+                    if idle >= max_idle:
+                        log.info(f"Stopping: No new reviews found after {max_idle} scroll attempts")
                         break
 
                     if not fresh_cards:
                         idle += 1
                         attempts += 1
+                        log.info(f"No new reviews in this iteration (idle: {idle}/{max_idle}, attempts: {attempts}/{max_attempts}, total seen: {len(seen)})")
+
+                        # When no new reviews, scroll more aggressively
+                        try:
+                            # Try multiple scroll methods
+                            driver.execute_script(scroll_script)
+                            time.sleep(0.5)
+                            driver.execute_script("window.scrollBy(0, 500);")  # Extra scroll
+                            time.sleep(0.5)
+                        except Exception as e:
+                            log.warning(f"Error scrolling: {e}")
+                    else:
+                        log.info(f"Found {len(fresh_cards)} new reviews in this iteration")
+
+                    # Check if we're actually scrolling or stuck
+                    try:
+                        current_scroll = driver.execute_script("return arguments[0].scrollTop;", pane)
+                        if current_scroll == last_scroll_position and len(fresh_cards) == 0:
+                            scroll_stuck_count += 1
+                            log.warning(f"Scroll position hasn't changed (stuck at {current_scroll}px, stuck count: {scroll_stuck_count})")
+
+                            if scroll_stuck_count > 5:
+                                log.warning("Scroll is stuck - trying alternative scroll method")
+                                # Try clicking the last visible review to force loading
+                                try:
+                                    driver.execute_script("arguments[0].lastElementChild.scrollIntoView();", pane)
+                                    time.sleep(2)
+                                except:
+                                    pass
+                                scroll_stuck_count = 0
+                        else:
+                            scroll_stuck_count = 0
+                            last_scroll_position = current_scroll
+                    except:
+                        pass
 
                     # Use JavaScript for smoother scrolling
                     try:
@@ -1201,8 +1314,13 @@ class GoogleReviewsScraper:
                         # Try a simpler scroll method
                         driver.execute_script("window.scrollBy(0, 300);")
 
-                    # Dynamic sleep: sleep less when processing many reviews
-                    sleep_time = 0.7 if len(fresh_cards) > 5 else 1.0
+                    # Dynamic sleep: sleep less when processing many reviews, more when finding none
+                    if len(fresh_cards) > 5:
+                        sleep_time = 0.7
+                    elif len(fresh_cards) == 0:
+                        sleep_time = 2.0  # Wait longer when finding nothing (let page load)
+                    else:
+                        sleep_time = 1.0
                     time.sleep(sleep_time)
 
                 except StaleElementReferenceException:
