@@ -4,6 +4,15 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+### Added
+- **SQLite database foundation** — new `ReviewDB` class with 7 tables (places, reviews, scrape_sessions, review_history, place_aliases, sync_checkpoints, schema_version), 40+ methods, optimistic locking, dual-hash change detection, and full audit trail.
+- **Database backend abstraction** — `DatabaseBackend` protocol with `SQLiteBackend` implementation (WAL mode, foreign keys, busy_timeout). Pre-ready for PostgreSQL/MySQL via config switch.
+- **Place ID extraction** — `extract_place_id()` handles CID, hex ID, short links, and SHA-256 fallback. `canonicalize_url()` normalizes URLs for alias matching.
+- **122 unit tests** across 5 new test files covering all database operations, place isolation, content hashing, resurrection, optimistic locking, and concurrency.
+
+### Changed
+- Extracted `merge_review()` to `modules/data_logic.py` to prevent circular imports (backward-compatible re-export from `data_storage.py`).
+
 ## [1.0.3] - 2026-02-07
 
 ### Fixed

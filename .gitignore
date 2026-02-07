@@ -50,6 +50,7 @@ logs.db
 *.sqlite3
 *.db
 docs/AGENTS_LOG
+docs/plans/
 
 # -----------------------------------------------------------
 # Config Files

@@ -22,7 +22,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from tqdm import tqdm
 
-from modules.data_storage import MongoDBStorage, JSONStorage, merge_review
+from modules.data_storage import MongoDBStorage, JSONStorage
+from modules.data_logic import merge_review
 from modules.models import RawReview
 
 # Logger
