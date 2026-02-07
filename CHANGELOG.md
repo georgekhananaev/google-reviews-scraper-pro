@@ -2,6 +2,18 @@
 
 All notable changes to Google Reviews Scraper Pro.
 
+## [Unreleased]
+
+### Fixed
+- **Broken date parser** — `parse_date_to_iso()` had incorrect imports (`datetime.now()` on the module, `timezone.timedelta` instead of `timedelta`), causing it to silently fail and return empty strings for every review date.
+
+### Added
+- **Multilingual date parsing** — review dates now parse correctly in 25+ languages (Indonesian, Spanish, French, German, Italian, Portuguese, Russian, Japanese, Korean, Chinese, Arabic, Hindi, Turkish, Dutch, Polish, Vietnamese, Thai, Hebrew, and more). Previously only English "X ago" strings were recognized.
+- Arabic/Hebrew dual-form support (e.g., "שנתיים" = 2 years, "سنتين" = 2 years).
+
+### Changed
+- Removed ~130 lines of dead commented-out code from `utils.py`.
+
 ## [1.0.2] - 2026-02-07
 
 ### Added
