@@ -1,6 +1,6 @@
 # 🔥 Google Reviews Scraper Pro (2026) 🔥
 
-![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.0.2-brightgreen)
+![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.0.3-brightgreen)
 ![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 ![Last Update](https://img.shields.io/badge/Last%20Updated-February%202026-red)

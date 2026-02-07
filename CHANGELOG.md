@@ -4,6 +4,8 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-02-07
+
 ### Fixed
 - **Broken date parser** — `parse_date_to_iso()` had incorrect imports (`datetime.now()` on the module, `timezone.timedelta` instead of `timedelta`), causing it to silently fail and return empty strings for every review date.
 
