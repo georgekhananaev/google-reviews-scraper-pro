@@ -1,0 +1,51 @@
+[project]
+name = "google-reviews-scraper-pro"
+version = "1.0.2"
+description = "Battle-tested Google Maps review scraper with MongoDB integration, multi-language support, and image downloading"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "George Khananaev", email = "106206490+georgekhananaev@users.noreply.github.com" },
+]
+keywords = [
+    "google-maps",
+    "reviews",
+    "scraper",
+    "selenium",
+    "mongodb",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "seleniumbase>=4.34.9",
+    "googletrans==4.0.2",
+    "tqdm>=4.66.3",
+    "pymongo==4.12.0",
+    "boto3==1.35.1",
+    "fastapi==0.104.1",
+    "uvicorn==0.24.0",
+    "botocore~=1.35.99",
+    "pydantic~=2.11.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/georgekhananaev/google-reviews-scraper-pro"
+Repository = "https://github.com/georgekhananaev/google-reviews-scraper-pro"
+Issues = "https://github.com/georgekhananaev/google-reviews-scraper-pro/issues"
+
+[project.scripts]
+scrape-reviews = "start:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

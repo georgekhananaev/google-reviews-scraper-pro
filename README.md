@@ -544,6 +544,10 @@ your-bucket/
 - **Security**: Use IAM roles instead of hardcoded keys in production
 - **Monitoring**: Enable S3 access logging to track usage
 
+## 📜 Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a full history of releases and what changed.
+
 ## 🌐 Links
 
 - [Python Documentation](https://docs.python.org/3/)

@@ -9,6 +9,11 @@ All notable changes to Google Reviews Scraper Pro.
 - `navigate_to_place()` method with multi-step bypass strategy: session warm-up on google.com, place name extraction, search-based navigation, and direct URL fallback.
 - `_extract_place_name()` helper to parse place names from URLs or page titles (supports shortened URLs like `maps.app.goo.gl`).
 - `_extract_place_coords()` helper to extract lat/lng from Google Maps URLs for precise search targeting.
+- `pyproject.toml` for modern Python packaging and `uv` support.
+
+### Changed
+- Synced version strings across `api_server.py`, `README.md`, and `pyproject.toml` to 1.0.2.
+- Added changelog reference section to `README.md`.
 
 ## [1.0.1] - 2025-12-07
 
