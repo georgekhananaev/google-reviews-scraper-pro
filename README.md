@@ -1,15 +1,16 @@
-# 🔥 Google Reviews Scraper Pro (2025) 🔥
+# 🔥 Google Reviews Scraper Pro (2026) 🔥
 
-![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.0.1-brightgreen)
+![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.0.2-brightgreen)
 ![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
-![Last Update](https://img.shields.io/badge/Last%20Updated-December%202025-red)
+![Last Update](https://img.shields.io/badge/Last%20Updated-February%202026-red)
 
-**FINALLY! A scraper that ACTUALLY WORKS in 2025!** While others break with every Google update, this bad boy keeps on trucking. Say goodbye to the frustration of constantly broken scrapers and hello to a beast that rips through Google's defenses like a hot knife through butter. This battle-tested, rock-solid solution will extract every juicy detail from Google reviews while laughing in the face of rate limiting.
+**FINALLY! A scraper that ACTUALLY WORKS in 2026!** While others break with every Google update, this bad boy keeps on trucking. Say goodbye to the frustration of constantly broken scrapers and hello to a beast that rips through Google's defenses like a hot knife through butter. This battle-tested, rock-solid solution will extract every juicy detail from Google reviews while laughing in the face of rate limiting.
 
 ## 🌟 Feature Artillery
 
-- **Bulletproof in 2025**: While the competition falls apart, we've cracked Google's latest tricks
+- **Bulletproof in 2026**: While the competition falls apart, we've cracked Google's latest tricks
+- **Google "Limited View" Bypass**: Google started hiding reviews from non-logged users in Feb 2026. We bypass it completely using search-based navigation - no login needed!
 - **Enhanced SeleniumBase UC Mode**: Superior anti-detection with automatic Chrome/ChromeDriver version matching - no more version headaches!
 - **Polyglot Powerhouse**: Devours reviews in a smorgasbord of languages - English, Hebrew, Thai, German, you name it!
 - **MongoDB Mastery**: Dumps pristine data structures straight into your MongoDB instance
@@ -362,6 +363,7 @@ print(f"Reviews with images: {len(reviews_with_images)}")
    - Did you forget to start Mongo? `sudo systemctl start mongod` (Linux) or `brew services start mongodb-community` (Mac)
 
 3. **"Where Are My Reviews?!" Crisis**
+   - **Google "Limited View" (Feb 2026):** Google now shows a "limited view" to non-logged users on direct place URLs. Our scraper handles this automatically via search-based navigation - just make sure you're on the latest version!
    - Make sure your URL isn't garbage - copy directly from the address bar in Google Maps
    - Not all sort options work for all businesses. Try `--sort relevance` if all else fails
    - Some locations have zero reviews. Yes, it happens. No, it's not the scraper's fault.
@@ -411,7 +413,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 A: Look, I'm not your lawyer. Google doesn't want you to do it. It violates their ToS. It's your business whether that scares you or not. This tool exists for "research purposes" (wink wink). Use at your own risk, hotshot.
 
 **Q: Will this still work tomorrow/next week/when Google changes stuff?**  
-A: Unlike 99% of the GitHub garbage that breaks when Google changes a CSS class, we're battle-hardened veterans of Google's interface wars. We update this beast CONSTANTLY. April 2025? Rock solid. May 2025? Probably still golden. 2026? Check back for updates.
+A: Unlike 99% of the GitHub garbage that breaks when Google changes a CSS class, we're battle-hardened veterans of Google's interface wars. We update this beast CONSTANTLY. Google locked reviews behind a "limited view" in Feb 2026? We bypassed it the same day. This thing adapts faster than Google can change.
 
 **Q: How do I avoid Google's ban hammer?**  
 A: Our undetected-chromedriver does the heavy lifting, but:

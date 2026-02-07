@@ -236,9 +236,8 @@ class GoogleReviewsScraper:
         # Set window size
         driver.set_window_size(1400, 900)
 
-        # Add additional stealth settings
+        # Add additional stealth settings and Google Maps login-state bypass
         try:
-            # Disable automation flags
             driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
                 'source': '''
                     Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
@@ -283,6 +282,131 @@ class GoogleReviewsScraper:
             log.debug(f"Error handling cookie dialog: {e}")
 
         return False
+
+    def _extract_place_name(self, driver: Chrome, url: str) -> str:
+        """
+        Extract the place name from a Google Maps URL.
+        Tries URL decoding first, then falls back to loading the page.
+        """
+        import urllib.parse
+
+        # Try to extract from URL path (e.g. /maps/place/PLACE+NAME/...)
+        match = re.search(r'/maps/place/([^/@]+)', url)
+        if match:
+            name = urllib.parse.unquote(match.group(1))
+            # Remove Unicode control characters
+            name = re.sub(r'[\u200e\u200f\u202a-\u202e]', '', name)
+            if len(name) > 2:
+                log.info(f"Extracted place name from URL: '{name}'")
+                return name
+
+        # If the URL is a shortened URL or we couldn't parse the name,
+        # load it briefly to get the title
+        try:
+            driver.get(url)
+            time.sleep(4)
+            # Get the page title - usually "Place Name - Google Maps"
+            title = driver.title or ""
+            name = title.replace(" - Google Maps", "").strip()
+            name = re.sub(r'[\u200e\u200f\u202a-\u202e]', '', name)
+            if name:
+                log.info(f"Extracted place name from page title: '{name}'")
+                return name
+        except Exception as e:
+            log.debug(f"Could not extract place name from page: {e}")
+
+        return ""
+
+    def _extract_place_coords(self, url: str) -> tuple:
+        """Extract lat/lng coordinates from a Google Maps URL."""
+        match = re.search(r'@(-?[\d.]+),(-?[\d.]+)', url)
+        if match:
+            return match.group(1), match.group(2)
+        match = re.search(r'!3d(-?[\d.]+)!4d(-?[\d.]+)', url)
+        if match:
+            return match.group(1), match.group(2)
+        return None, None
+
+    def navigate_to_place(self, driver: Chrome, url: str, wait: WebDriverWait) -> bool:
+        """
+        Navigate to a Google Maps place, bypassing the 'limited view' restriction
+        that Google shows to non-logged-in users.
+
+        Strategy:
+        1. Warm up by visiting google.com to establish cookies/session state
+        2. Use Google Maps search-based navigation (avoids limited view)
+        3. Fall back to direct URL if search doesn't work
+        """
+        log.info("Navigating to place with limited-view bypass...")
+
+        # Step 1: Warm up - visit google.com first to establish session cookies
+        try:
+            driver.get("https://www.google.com")
+            time.sleep(2)
+            self.dismiss_cookies(driver)
+            log.info("Session warm-up completed")
+        except Exception as e:
+            log.debug(f"Warm-up navigation failed: {e}")
+
+        # Step 2: Resolve the target URL and extract place name
+        place_name = self._extract_place_name(driver, url)
+        current_url = driver.current_url
+
+        # Step 3: Try search-based navigation (primary bypass method)
+        if place_name:
+            # Extract coordinates for more precise search
+            lat, lng = self._extract_place_coords(current_url)
+            search_query = place_name
+            if lat and lng:
+                search_url = f"https://www.google.com/maps/search/{search_query}/@{lat},{lng},17z"
+            else:
+                search_url = f"https://www.google.com/maps/search/{search_query}/"
+
+            log.info(f"Trying search-based navigation: {search_url}")
+            driver.get(search_url)
+            time.sleep(5)
+
+            # Check if we landed on a place page with full content (tabs visible)
+            tabs = driver.find_elements(By.CSS_SELECTOR, '[role="tab"]')
+            has_reviews = any(
+                any(w in (t.text or "").lower() for w in REVIEW_WORDS)
+                or t.get_attribute("data-tab-index") == "1"
+                for t in tabs
+            )
+
+            if has_reviews:
+                log.info("Search-based navigation successful - full page with reviews tab loaded")
+                self.dismiss_cookies(driver)
+                return True
+
+            # Check for review cards directly (some layouts skip tabs)
+            cards = driver.find_elements(By.CSS_SELECTOR, 'div[data-review-id]')
+            if cards:
+                log.info(f"Search-based navigation found {len(cards)} review cards")
+                self.dismiss_cookies(driver)
+                return True
+
+            log.info("Search-based navigation did not show reviews, trying direct URL...")
+
+        # Step 4: Fallback to direct URL
+        log.info(f"Navigating directly to: {url}")
+        driver.get(url)
+        try:
+            wait.until(lambda d: "google.com/maps" in d.current_url)
+        except TimeoutException:
+            log.warning("Timed out waiting for Google Maps to load")
+        time.sleep(3)
+        self.dismiss_cookies(driver)
+
+        # Check if limited view is active
+        try:
+            body_text = driver.find_element(By.TAG_NAME, "body").text
+            if "limited view" in body_text.lower():
+                log.warning("Google Maps is showing 'limited view' - reviews may not be available")
+        except Exception:
+            pass
+
+        return True
 
     def is_reviews_tab(self, tab: WebElement) -> bool:
         """
@@ -1126,8 +1250,8 @@ class GoogleReviewsScraper:
             driver = self.setup_driver(headless)
             wait = WebDriverWait(driver, 20)  # Reduced from 40 to 20 for faster timeout
 
-            driver.get(url)
-            wait.until(lambda d: "google.com/maps" in d.current_url)
+            # Navigate using limited-view bypass (search-based navigation)
+            self.navigate_to_place(driver, url, wait)
 
             self.dismiss_cookies(driver)
             self.click_reviews_tab(driver)
