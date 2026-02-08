@@ -1,6 +1,6 @@
 [project]
 name = "google-reviews-scraper-pro"
-version = "1.0.3"
+version = "1.1.0"
 description = "Battle-tested Google Maps review scraper with MongoDB integration, multi-language support, and image downloading"
 readme = "README.md"
 license = "MIT"
