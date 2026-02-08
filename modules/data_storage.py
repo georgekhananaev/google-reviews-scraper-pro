@@ -2,6 +2,7 @@
 Data storage modules for Google Maps Reviews Scraper.
 """
 
+import copy
 import json
 import logging
 import ssl
@@ -92,8 +93,30 @@ class MongoDBStorage:
             log.error(f"Error fetching reviews from MongoDB: {e}")
             return {}
 
-    def save_reviews(self, reviews: Dict[str, Dict[str, Any]]):
-        """Save reviews to MongoDB using bulk operations"""
+    def fetch_existing_ids(self) -> Set[str]:
+        """Fetch existing review IDs from MongoDB (lightweight projection)."""
+        if not self.connected and not self.connect():
+            return set()
+        try:
+            return {
+                doc["review_id"]
+                for doc in self.collection.find({}, {"review_id": 1, "_id": 0})
+                if "review_id" in doc
+            }
+        except Exception as e:
+            log.error(f"Error fetching review IDs from MongoDB: {e}")
+            return set()
+
+    def save_reviews(self, reviews: Dict[str, Dict[str, Any]], sync_mode: str = "update"):
+        """Save reviews to MongoDB using bulk operations.
+
+        Works independently from the scrape — always receives the full review
+        set from SQLite and decides what to write based on *sync_mode*:
+
+          "new_only" — query MongoDB for existing IDs, insert only missing docs.
+          "update"   — upsert all: insert missing + update existing ($set).
+          "full"     — same write as "update".
+        """
         if not reviews:
             log.info("No reviews to save to MongoDB")
             return
@@ -137,18 +160,29 @@ class MongoDBStorage:
                     for key, value in self.custom_params.items():
                         review[key] = value
 
+            # For "new_only": check MongoDB and skip existing reviews
+            if sync_mode == "new_only":
+                existing_ids = self.fetch_existing_ids()
+                filtered = {rid: r for rid, r in processed_reviews.items()
+                            if r.get("review_id") not in existing_ids}
+                skipped = len(processed_reviews) - len(filtered)
+                if skipped:
+                    log.info("sync_mode=new_only: skipping %d existing reviews", skipped)
+                processed_reviews = filtered
+
+            if not processed_reviews:
+                log.info("No new reviews to sync to MongoDB")
+                return
+
             operations = []
             for review in processed_reviews.values():
-                # Convert to proper MongoDB document
-                # Exclude _id for inserts, MongoDB will generate it
                 if "_id" in review:
                     del review["_id"]
-
                 operations.append(
                     pymongo.UpdateOne(
                         {"review_id": review["review_id"]},
                         {"$set": review},
-                        upsert=True
+                        upsert=True,
                     )
                 )
 
@@ -157,6 +191,57 @@ class MongoDBStorage:
                 log.info(f"MongoDB: Upserted {result.upserted_count}, modified {result.modified_count} reviews")
         except Exception as e:
             log.error(f"Error saving reviews to MongoDB: {e}")
+
+    def write_reviews(self, reviews: Dict[str, Dict[str, Any]], sync_mode: str = "update"):
+        """Pure writer — no date/image/param processing.
+
+        Expects already-processed reviews from the pipeline.
+        sync_mode filtering + bulk upsert only.
+        """
+        if not reviews:
+            log.info("No reviews to write to MongoDB")
+            return
+
+        if not self.connected and not self.connect():
+            log.warning("Cannot write reviews - MongoDB connection failed")
+            return
+
+        try:
+            target = reviews
+
+            if sync_mode == "new_only":
+                existing_ids = self.fetch_existing_ids()
+                target = {
+                    rid: r for rid, r in reviews.items()
+                    if r.get("review_id") not in existing_ids
+                }
+                skipped = len(reviews) - len(target)
+                if skipped:
+                    log.info("sync_mode=new_only: skipping %d existing reviews", skipped)
+
+            if not target:
+                log.info("No new reviews to sync to MongoDB")
+                return
+
+            operations = []
+            for review in target.values():
+                doc = {k: v for k, v in review.items() if k != "_id"}
+                operations.append(
+                    pymongo.UpdateOne(
+                        {"review_id": doc["review_id"]},
+                        {"$set": doc},
+                        upsert=True,
+                    )
+                )
+
+            if operations:
+                result = self.collection.bulk_write(operations)
+                log.info(
+                    "MongoDB: Upserted %d, modified %d reviews",
+                    result.upserted_count, result.modified_count,
+                )
+        except Exception as e:
+            log.error(f"Error writing reviews to MongoDB: {e}")
 
 
 class JSONStorage:
@@ -232,6 +317,23 @@ class JSONStorage:
         # Write to JSON file
         self.json_path.write_text(json.dumps(list(processed_docs.values()),
                                              ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def write_json_docs(self, docs: Dict[str, Dict[str, Any]]):
+        """Pure writer — no date/image/param processing.
+
+        Expects already-processed reviews from the pipeline.
+        Deep-copies, serializes datetimes, writes JSON file.
+        """
+        out = copy.deepcopy(docs)
+        for doc in out.values():
+            for key, value in doc.items():
+                if isinstance(value, datetime):
+                    doc[key] = value.isoformat()
+
+        self.json_path.write_text(
+            json.dumps(list(out.values()), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     def load_seen(self) -> Set[str]:
         """Load set of already seen review IDs"""

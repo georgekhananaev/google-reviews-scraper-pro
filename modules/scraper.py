@@ -22,9 +22,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from tqdm import tqdm
 
-from modules.data_storage import MongoDBStorage, JSONStorage
 from modules.data_logic import merge_review
 from modules.models import RawReview
+from modules.pipeline import PostScrapeRunner
 from modules.review_db import ReviewDB
 from modules.place_id import extract_place_id
 
@@ -167,10 +167,6 @@ class GoogleReviewsScraper:
     def __init__(self, config: Dict[str, Any]):
         """Initialize scraper with configuration"""
         self.config = config
-        self.use_mongodb = config.get("use_mongodb", True)
-        self.mongodb = MongoDBStorage(config) if self.use_mongodb else None
-        self.json_storage = JSONStorage(config)
-        self.backup_to_json = config.get("backup_to_json", True)
         self.scrape_mode = config.get("scrape_mode", "update")
         db_path = config.get("db_path", "reviews.db")
         self.review_db = ReviewDB(db_path)
@@ -1578,37 +1574,17 @@ class GoogleReviewsScraper:
                     ),
                 )
 
-            # Post-scrape auto-triggers (backward compatibility)
+            # Post-scrape pipeline: process once, write to all targets
             reviews = self.review_db.get_reviews(place_id) if place_id else []
-
-            # Set place ID for per-business image and S3 directories
-            if place_id:
-                for handler in [
-                    getattr(self.mongodb, "image_handler", None) if self.use_mongodb and self.mongodb else None,
-                    getattr(self.json_storage, "image_handler", None),
-                ]:
-                    if handler:
-                        handler.set_place_id(place_id)
-                        if hasattr(handler, "s3_handler") and handler.s3_handler.enabled:
-                            handler.s3_handler.set_place_id(place_id)
-
-            if self.use_mongodb and self.mongodb:
-                # Only sync reviews that actually changed (new/updated/restored)
-                changed_reviews = [r for r in reviews if r["review_id"] in changed_ids]
-                if changed_reviews:
-                    mongo_docs = {r["review_id"]: self._db_review_to_legacy(r) for r in changed_reviews}
-                    log.info("Syncing %d changed reviews to MongoDB (skipping %d unchanged)...",
-                             len(mongo_docs), len(reviews) - len(mongo_docs))
-                    self.mongodb.save_reviews(mongo_docs)
-                else:
-                    log.info("No changed reviews to sync to MongoDB")
-
-            if self.backup_to_json:
-                # JSON backup gets full snapshot for completeness
-                all_docs = {r["review_id"]: self._db_review_to_legacy(r) for r in reviews}
-                log.info("Backing up to JSON...")
-                self.json_storage.save_json_docs(all_docs)
-                self.json_storage.save_seen(seen)
+            if reviews:
+                legacy_docs = {
+                    r["review_id"]: self._db_review_to_legacy(r) for r in reviews
+                }
+                runner = PostScrapeRunner(self.config)
+                try:
+                    runner.run(legacy_docs, place_id, seen=seen)
+                finally:
+                    runner.close()
 
             log.info(
                 "Finished - new: %d, updated: %d, restored: %d, unchanged: %d",
@@ -1634,12 +1610,6 @@ class GoogleReviewsScraper:
             if driver is not None:
                 try:
                     driver.quit()
-                except Exception:
-                    pass
-
-            if self.mongodb:
-                try:
-                    self.mongodb.close()
                 except Exception:
                     pass
 

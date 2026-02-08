@@ -70,16 +70,16 @@ class TestMongoDBConnection:
             
         # Check required configuration fields
         assert "uri" in mongodb_config, "MongoDB URI is required"
-        assert "database" in mongodb_config, "MongoDB database name is required"
-        assert "collection" in mongodb_config, "MongoDB collection name is required"
-        
+
         # Validate URI format
         uri = mongodb_config["uri"]
         assert uri.startswith("mongodb://") or uri.startswith("mongodb+srv://"), "Invalid MongoDB URI format"
-        
-        # Validate names are not empty
-        assert mongodb_config["database"].strip(), "Database name cannot be empty"
-        assert mongodb_config["collection"].strip(), "Collection name cannot be empty"
+
+        # database/collection can be set per-business; validate only when present at top level
+        if "database" in mongodb_config:
+            assert mongodb_config["database"].strip(), "Database name cannot be empty"
+        if "collection" in mongodb_config:
+            assert mongodb_config["collection"].strip(), "Collection name cannot be empty"
 
     def test_mongodb_skipped_when_disabled(self, use_mongodb):
         """Test that MongoDB tests are skipped when disabled"""

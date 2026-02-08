@@ -101,7 +101,14 @@ class ImageHandler:
 
         return f"{base_url}/{path}/{filename}"
 
-    def download_image(self, url_info: Tuple[str, bool]) -> Tuple[str, str, str]:
+    def _build_download_url(self, url: str) -> str:
+        """Build a download URL with configured dimensions for Google images."""
+        if 'googleusercontent.com' in url or 'ggpht.com' in url or 'gstatic.com' in url:
+            base_url = url.split('=')[0]
+            return base_url + f"=w{self.max_width}-h{self.max_height}-no"
+        return url.split("=")[0]
+
+    def download_image(self, url_info: Tuple[str, bool]) -> Tuple[str, str, str, str]:
         """
         Download an image from URL and save to disk.
 
@@ -109,18 +116,20 @@ class ImageHandler:
             url_info: Tuple of (url, is_profile)
 
         Returns:
-            Tuple of (url, local filename, custom url)
+            Tuple of (original_url, download_url, local filename, custom url)
         """
         url, is_profile = url_info
 
         # Skip our custom URLs
         if not self.is_not_custom_url(url):
-            return url, "", ""
+            return url, url, "", ""
 
         try:
             filename = self.get_filename_from_url(url, is_profile)
             if not filename:
-                return url, "", ""
+                return url, url, "", ""
+
+            download_url = self._build_download_url(url)
 
             # Choose directory based on image type
             target_dir = self.profile_dir if is_profile else self.review_dir
@@ -128,17 +137,8 @@ class ImageHandler:
 
             # Skip if file already exists
             if filepath.exists():
-                # Generate custom URL even if file exists
                 custom_url = self.get_custom_url(filename, is_profile)
-                return url, filename, custom_url
-
-            # Build download URL with configured dimensions (keep original url unchanged for mapping)
-            download_url = url
-            if 'googleusercontent.com' in url or 'ggpht.com' in url or 'gstatic.com' in url:
-                base_url = url.split('=')[0]
-                download_url = base_url + f"=w{self.max_width}-h{self.max_height}-no"
-            else:
-                download_url = url.split("=")[0]
+                return url, download_url, filename, custom_url
 
             response = requests.get(download_url, stream=True, timeout=10)
             response.raise_for_status()
@@ -147,13 +147,12 @@ class ImageHandler:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
 
-            # Generate custom URL
             custom_url = self.get_custom_url(filename, is_profile)
-            return url, filename, custom_url
+            return url, download_url, filename, custom_url
 
         except Exception as e:
             log.error(f"Error downloading image from {url}: {e}")
-            return url, "", ""
+            return url, url, "", ""
 
     def download_all_images(self, reviews: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         """
@@ -205,18 +204,21 @@ class ImageHandler:
         log.info(
             f"Downloading {len(download_tasks)} images ({len(profile_urls)} profiles, {len(review_urls)} review images)...")
 
-        # Create URL to filename and URL to custom URL mappings
+        # Create mappings: original URL → filename, custom URL, and download URL
         url_to_filename = {}
         url_to_custom_url = {}
+        url_to_download_url = {}
 
         # Download images in parallel
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             results = executor.map(self.download_image, download_tasks)
-            for url, filename, custom_url in results:
+            for orig_url, dl_url, filename, custom_url in results:
                 if filename:
-                    url_to_filename[url] = filename
+                    url_to_filename[orig_url] = filename
                 if custom_url:
-                    url_to_custom_url[url] = custom_url
+                    url_to_custom_url[orig_url] = custom_url
+                if dl_url != orig_url:
+                    url_to_download_url[orig_url] = dl_url
 
         # Upload to S3 if enabled
         s3_url_mapping = {}
@@ -269,7 +271,6 @@ class ImageHandler:
                                     if url and self.is_not_custom_url(url)]
                     review["local_images"] = [img for img in local_images if img]
 
-                # Replace URLs if enabled
                 if self.replace_urls:
                     # Store original URLs if needed and not already stored
                     if self.preserve_original_urls and "original_image_urls" not in review:
@@ -278,7 +279,7 @@ class ImageHandler:
                     # Create custom URLs for each image
                     custom_images = []
                     for url in user_images_original:
-                        # Prefer S3 URL if available
+                        # Prefer S3 URL if available, then custom URL
                         if url in s3_url_mapping:
                             custom_images.append(s3_url_mapping[url])
                         elif url in url_to_custom_url:
@@ -286,9 +287,13 @@ class ImageHandler:
                         elif not self.is_not_custom_url(url):  # Already a custom URL
                             custom_images.append(url)
 
-                    # Replace with custom URLs if we have them
                     if custom_images:
                         review["user_images"] = custom_images
+                else:
+                    # No custom URL replacement — update URLs to use configured dimensions
+                    review["user_images"] = [
+                        url_to_download_url.get(url, url) for url in user_images_original
+                    ]
 
             # Process profile_picture
             if "profile_picture" in review and review["profile_picture"]:
@@ -296,7 +301,6 @@ class ImageHandler:
                 if self.store_local_paths and profile_picture_original in url_to_filename:
                     review["local_profile_picture"] = url_to_filename[profile_picture_original]
 
-                # Replace profile_picture URL if enabled
                 if self.replace_urls:
                     # Store original URL if needed and not already stored
                     if self.preserve_original_urls and "original_profile_picture" not in review:
@@ -308,15 +312,16 @@ class ImageHandler:
                     elif profile_picture_original in url_to_custom_url:
                         review["profile_picture"] = url_to_custom_url[profile_picture_original]
                     elif not self.is_not_custom_url(review["profile_picture"]):
-                        # If current URL is already a custom URL, keep it
                         pass
                     elif profile_picture_original:
-                        # If we don't have a custom URL but have a filename, generate one
                         filename = url_to_filename.get(profile_picture_original, "")
                         if filename:
                             custom_url = self.get_custom_url(filename, True)
                             if custom_url:
                                 review["profile_picture"] = custom_url
+                elif profile_picture_original in url_to_download_url:
+                    # No custom URL replacement — update to use configured dimensions
+                    review["profile_picture"] = url_to_download_url[profile_picture_original]
 
         log.info(f"Downloaded {len(url_to_filename)} images")
         if self.use_s3 and s3_url_mapping:

@@ -5,7 +5,7 @@ S3 upload handler for Google Maps Reviews Scraper.
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set
 
 import boto3
 from botocore.exceptions import ClientError
@@ -178,5 +178,32 @@ class S3Handler:
                 
         if results:
             log.info(f"Successfully uploaded {len(results)} images to S3")
-            
+
         return results
+
+    def list_existing_keys(self, place_id: str = None) -> Set[str]:
+        """List existing S3 keys under prefix (for sync_mode='new_only').
+
+        Args:
+            place_id: Optional place ID to scope the listing.
+
+        Returns:
+            Set of existing S3 keys.
+        """
+        if not self.enabled:
+            return set()
+
+        search_prefix = self.prefix
+        if place_id:
+            search_prefix = f"{self.prefix}{place_id}/"
+
+        keys: Set[str] = set()
+        try:
+            paginator = self.s3_client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=search_prefix):
+                for obj in page.get("Contents", []):
+                    keys.add(obj["Key"])
+            log.info("S3: found %d existing keys under '%s'", len(keys), search_prefix)
+        except ClientError as e:
+            log.error(f"Error listing S3 keys: {e}")
+        return keys

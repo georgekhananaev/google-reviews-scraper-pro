@@ -170,12 +170,13 @@ businesses:
 #   max_width              integer
 #   max_height             integer
 #   use_mongodb            true/false
-#   mongodb                uri, database, collection
+#   mongodb                uri, database, collection, sync_mode
 #   use_s3                 true/false
 #   s3                     aws_access_key_id, aws_secret_access_key,
 #                          region_name, bucket_name, prefix,
 #                          profiles_folder, reviews_folder,
-#                          delete_local_after_upload, s3_base_url
+#                          delete_local_after_upload, s3_base_url,
+#                          sync_mode
 #   replace_urls           true/false
 #   custom_url_base        URL string
 #   custom_url_profiles    path string

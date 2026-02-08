@@ -35,7 +35,8 @@ DEFAULT_CONFIG = {
     "mongodb": {
         "uri": "mongodb://localhost:27017",
         "database": "reviews",
-        "collection": "google_reviews"
+        "collection": "google_reviews",
+        "sync_mode": "update",
     },
     "backup_to_json": True,
     "json_path": "google_reviews.json",
@@ -54,12 +55,16 @@ DEFAULT_CONFIG = {
         "company": "Thaitours",  # Default example
         "source": "Google Maps"  # Default example
     },
+    "s3": {
+        "sync_mode": "update",
+    },
     "db_path": "reviews.db",
     "stop_threshold": 3,
 }
 
 
 _VALID_SCRAPE_MODES = {"new_only", "update", "full"}
+_VALID_SYNC_MODES = {"new_only", "update", "full"}
 
 
 def resolve_aliases(config: Dict[str, Any]) -> None:
@@ -92,6 +97,18 @@ def _validate_config(config: Dict[str, Any]) -> None:
         val = config.get(key)
         if not isinstance(val, int) or val < 0:
             config[key] = DEFAULT_CONFIG[key]
+
+    mongo_cfg = config.get("mongodb", {})
+    sync_mode = mongo_cfg.get("sync_mode", "update")
+    if sync_mode not in _VALID_SYNC_MODES:
+        log.warning("Invalid mongodb.sync_mode '%s', falling back to 'update'", sync_mode)
+        mongo_cfg["sync_mode"] = "update"
+
+    s3_cfg = config.get("s3", {})
+    s3_sync = s3_cfg.get("sync_mode", "update")
+    if s3_sync not in _VALID_SYNC_MODES:
+        log.warning("Invalid s3.sync_mode '%s', falling back to 'update'", s3_sync)
+        s3_cfg["sync_mode"] = "update"
 
 
 def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:

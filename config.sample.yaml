@@ -52,12 +52,19 @@ max_height: 1200
 # MongoDB Sync (optional - global defaults)
 # -----------------------------------------------------------------------------
 # All reviews stored in one collection with place_id for filtering.
-# Only changed reviews are synced (new, updated, restored).
+# Only changed reviews are synced (new, updated, restored) by default.
 use_mongodb: false
 mongodb:
   uri: "mongodb://localhost:27017"
   database: "reviews"
   collection: "google_reviews"
+  # Sync mode — controls how reviews are written to MongoDB.
+  # Works independently from the scraper — always receives ALL reviews
+  # from SQLite and decides what to write based on MongoDB state:
+  #   "new_only"  — check MongoDB, only insert reviews that don't exist there
+  #   "update"    — upsert all: insert missing + update existing (default)
+  #   "full"      — same as "update"
+  sync_mode: "update"
 
 # -----------------------------------------------------------------------------
 # S3 Upload (optional - global defaults)
@@ -74,6 +81,11 @@ s3:
   reviews_folder: "reviews/"
   delete_local_after_upload: false
   s3_base_url: ""               # Custom base URL (empty = AWS default)
+  # Sync mode — controls how images are uploaded to S3:
+  #   "new_only"  — list existing S3 keys, skip files already uploaded
+  #   "update"    — upload all local files, overwrite if exists (default)
+  #   "full"      — same as "update"
+  sync_mode: "update"
 
 # -----------------------------------------------------------------------------
 # URL Replacement (optional)

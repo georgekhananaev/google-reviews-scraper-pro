@@ -4,6 +4,16 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+### Added
+- **Post-scrape pipeline** — new `PostScrapeRunner` in `modules/pipeline.py` runs processing (dates, images, S3, cleanup, custom params) once, then writes to each enabled target (MongoDB, JSON). Eliminates duplicate image downloads when both MongoDB and JSON are enabled.
+- **S3 `sync_mode`** — `s3.sync_mode` config option (`"new_only"`, `"update"`, `"full"`) controls whether existing S3 files are skipped or overwritten.
+- **`S3Handler.list_existing_keys()`** — lists existing S3 keys under prefix for `sync_mode="new_only"`.
+- **Pure-writer methods** — `MongoDBStorage.write_reviews()` and `JSONStorage.write_json_docs()` accept already-processed reviews without re-running date/image/param logic.
+
+### Changed
+- Scraper post-scrape block replaced with single `PostScrapeRunner` call. Removed `MongoDBStorage`/`JSONStorage` init from scraper `__init__`. Processing happens once in the pipeline instead of per-target.
+- Backward-compat: `save_reviews()` and `save_json_docs()` still work for external callers (e.g. `api_server.py`).
+
 ## [1.1.0] - 2026-02-08
 
 **Major release** — biggest update since 1.0. The scraper now uses SQLite as its primary storage engine with full multi-business support, a new CLI toolkit, and significantly improved scrape efficiency. See the full list of changes below.
