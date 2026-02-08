@@ -25,6 +25,8 @@ from tqdm import tqdm
 from modules.data_storage import MongoDBStorage, JSONStorage
 from modules.data_logic import merge_review
 from modules.models import RawReview
+from modules.review_db import ReviewDB
+from modules.place_id import extract_place_id
 
 # Logger
 log = logging.getLogger("scraper")
@@ -170,6 +172,31 @@ class GoogleReviewsScraper:
         self.json_storage = JSONStorage(config)
         self.backup_to_json = config.get("backup_to_json", True)
         self.overwrite_existing = config.get("overwrite_existing", False)
+        db_path = config.get("db_path", "reviews.db")
+        self.review_db = ReviewDB(db_path)
+
+    @staticmethod
+    def _db_review_to_legacy(db_review: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert DB review format to legacy format for MongoDB/JSON compat."""
+        text = db_review.get("review_text", {})
+        description = text if isinstance(text, dict) else {}
+        images = db_review.get("user_images", [])
+        owner = db_review.get("owner_responses", {})
+        return {
+            "review_id": db_review.get("review_id", ""),
+            "place_id": db_review.get("place_id", ""),
+            "author": db_review.get("author", ""),
+            "rating": db_review.get("rating", 0),
+            "description": description,
+            "likes": db_review.get("likes", 0),
+            "user_images": images if isinstance(images, list) else [],
+            "author_profile_url": db_review.get("profile_url", ""),
+            "profile_picture": db_review.get("profile_picture", ""),
+            "owner_responses": owner if isinstance(owner, dict) else {},
+            "created_date": db_review.get("created_date", ""),
+            "review_date": db_review.get("review_date", ""),
+            "last_modified_date": db_review.get("last_modified", ""),
+        }
 
     def setup_driver(self, headless: bool):
         """
@@ -1220,31 +1247,15 @@ class GoogleReviewsScraper:
         headless = self.config.get("headless", True)
         sort_by = self.config.get("sort_by", "relevance")
         stop_on_match = self.config.get("stop_on_match", False)
+        stop_threshold = self.config.get("stop_threshold", 3)
 
         log.info(f"Starting scraper with settings: headless={headless}, sort_by={sort_by}")
         log.info(f"URL: {url}")
 
-        # Initialize storage
-        # If not overwriting, load existing data
-        if self.overwrite_existing:
-            docs = {}
-            seen = set()
-        else:
-            # Try to get from MongoDB first if enabled
-            docs = {}
-            if self.use_mongodb and self.mongodb:
-                docs = self.mongodb.fetch_existing_reviews()
-
-            # If backup_to_json is enabled, also load from JSON for merging
-            if self.backup_to_json:
-                json_docs = self.json_storage.load_json_docs()
-                # Merge JSON docs with MongoDB docs
-                for review_id, review in json_docs.items():
-                    if review_id not in docs:
-                        docs[review_id] = review
-
-            # Load seen IDs from file
-            seen = self.json_storage.load_seen()
+        place_id = None
+        session_id = None
+        batch_stats = {"new": 0, "updated": 0, "restored": 0, "unchanged": 0}
+        changed_ids = set()  # Track IDs that actually changed for efficient sync
 
         driver = None
         try:
@@ -1253,6 +1264,30 @@ class GoogleReviewsScraper:
 
             # Navigate using limited-view bypass (search-based navigation)
             self.navigate_to_place(driver, url, wait)
+
+            # Extract place ID and register in database
+            resolved_url = driver.current_url
+            place_name = ""
+            try:
+                title = driver.title or ""
+                place_name = title.replace(" - Google Maps", "").strip()
+            except Exception:
+                pass
+            place_id = extract_place_id(url, resolved_url)
+            lat, lng = self._extract_place_coords(resolved_url)
+            lat_f = float(lat) if lat else None
+            lng_f = float(lng) if lng else None
+            place_id = self.review_db.upsert_place(
+                place_id, place_name, url, resolved_url, lat_f, lng_f
+            )
+            session_id = self.review_db.start_session(place_id, sort_by)
+            log.info(f"Registered place: {place_id} ({place_name})")
+
+            # Load seen IDs from DB (empty for overwrite mode)
+            if self.overwrite_existing:
+                seen = set()
+            else:
+                seen = self.review_db.get_review_ids(place_id)
 
             self.dismiss_cookies(driver)
             self.click_reviews_tab(driver)
@@ -1309,7 +1344,8 @@ class GoogleReviewsScraper:
 
             pbar = tqdm(desc="Scraped", ncols=80, initial=len(seen))
             idle = 0
-            processed_ids = set()  # Track processed IDs in current session
+            processed_ids = set()
+            consecutive_unchanged = 0
 
             # Prefetch selector to avoid repeated lookups
             try:
@@ -1354,10 +1390,9 @@ class GoogleReviewsScraper:
                     for c in cards:
                         try:
                             cid = c.get_attribute("data-review-id")
-                            if not cid or cid in seen or cid in processed_ids:
-                                if stop_on_match and cid and (cid in seen or cid in processed_ids):
-                                    idle = 999
-                                    break
+                            if not cid or cid in processed_ids:
+                                continue
+                            if cid in seen and not stop_on_match:
                                 continue
                             fresh_cards.append(c)
                         except StaleElementReferenceException:
@@ -1369,11 +1404,11 @@ class GoogleReviewsScraper:
                     for card in fresh_cards:
                         try:
                             raw = RawReview.from_card(card)
-                            processed_ids.add(raw.id)  # Track this ID to avoid re-processing
+                            processed_ids.add(raw.id)
                         except StaleElementReferenceException:
                             continue
                         except Exception:
-                            log.warning("⚠️ parse error – storing stub\n%s",
+                            log.warning("parse error - storing stub\n%s",
                                         traceback.format_exc(limit=1).strip())
                             try:
                                 raw_id = card.get_attribute("data-review-id") or ""
@@ -1382,11 +1417,43 @@ class GoogleReviewsScraper:
                             except StaleElementReferenceException:
                                 continue
 
-                        docs[raw.id] = merge_review(docs.get(raw.id), raw)
+                        review_dict = {
+                            "review_id": raw.id,
+                            "text": raw.text,
+                            "rating": raw.rating,
+                            "likes": raw.likes,
+                            "lang": raw.lang,
+                            "date": raw.date,
+                            "review_date": raw.review_date,
+                            "author": raw.author,
+                            "profile": raw.profile,
+                            "avatar": raw.avatar,
+                            "owner_text": raw.owner_text,
+                            "photos": raw.photos,
+                        }
+                        result = self.review_db.upsert_review(
+                            place_id, review_dict, session_id
+                        )
+                        batch_stats[result] = batch_stats.get(result, 0) + 1
+                        if result != "unchanged":
+                            changed_ids.add(raw.id)
                         seen.add(raw.id)
                         pbar.update(1)
                         idle = 0
-                        attempts = 0  # Reset attempts counter when we successfully process a review
+                        attempts = 0
+
+                        if stop_on_match:
+                            if result == "unchanged":
+                                consecutive_unchanged += 1
+                                if consecutive_unchanged >= stop_threshold:
+                                    log.info(
+                                        "Stopping: %d consecutive unchanged reviews",
+                                        stop_threshold,
+                                    )
+                                    idle = 999
+                                    break
+                            else:
+                                consecutive_unchanged = 0
 
                     if idle >= max_idle:
                         log.info(f"Stopping: No new reviews found after {max_idle} scroll attempts")
@@ -1464,18 +1531,57 @@ class GoogleReviewsScraper:
 
             pbar.close()
 
-            # Save to MongoDB if enabled
-            if self.use_mongodb and self.mongodb:
-                log.info("Saving reviews to MongoDB...")
-                self.mongodb.save_reviews(docs)
+            # End session with stats
+            total_found = sum(batch_stats.values())
+            if session_id:
+                self.review_db.end_session(
+                    session_id, "completed",
+                    reviews_found=total_found,
+                    reviews_new=batch_stats.get("new", 0),
+                    reviews_updated=(
+                        batch_stats.get("updated", 0)
+                        + batch_stats.get("restored", 0)
+                    ),
+                )
 
-            # Backup to JSON if enabled
+            # Post-scrape auto-triggers (backward compatibility)
+            reviews = self.review_db.get_reviews(place_id) if place_id else []
+
+            # Set place ID for per-business image and S3 directories
+            if place_id:
+                for handler in [
+                    getattr(self.mongodb, "image_handler", None) if self.use_mongodb and self.mongodb else None,
+                    getattr(self.json_storage, "image_handler", None),
+                ]:
+                    if handler:
+                        handler.set_place_id(place_id)
+                        if hasattr(handler, "s3_handler") and handler.s3_handler.enabled:
+                            handler.s3_handler.set_place_id(place_id)
+
+            if self.use_mongodb and self.mongodb:
+                # Only sync reviews that actually changed (new/updated/restored)
+                changed_reviews = [r for r in reviews if r["review_id"] in changed_ids]
+                if changed_reviews:
+                    mongo_docs = {r["review_id"]: self._db_review_to_legacy(r) for r in changed_reviews}
+                    log.info("Syncing %d changed reviews to MongoDB (skipping %d unchanged)...",
+                             len(mongo_docs), len(reviews) - len(mongo_docs))
+                    self.mongodb.save_reviews(mongo_docs)
+                else:
+                    log.info("No changed reviews to sync to MongoDB")
+
             if self.backup_to_json:
+                # JSON backup gets full snapshot for completeness
+                all_docs = {r["review_id"]: self._db_review_to_legacy(r) for r in reviews}
                 log.info("Backing up to JSON...")
-                self.json_storage.save_json_docs(docs)
+                self.json_storage.save_json_docs(all_docs)
                 self.json_storage.save_seen(seen)
 
-            log.info("✅ Finished – total unique reviews: %s", len(docs))
+            log.info(
+                "Finished - new: %d, updated: %d, restored: %d, unchanged: %d",
+                batch_stats["new"], batch_stats["updated"],
+                batch_stats["restored"], batch_stats["unchanged"],
+            )
+            log.info("Total unique reviews in DB: %d", len(reviews))
 
             end_time = time.time()
             elapsed_time = end_time - start_time
@@ -1484,6 +1590,8 @@ class GoogleReviewsScraper:
             return True
 
         except Exception as e:
+            if session_id:
+                self.review_db.end_session(session_id, "failed", error=str(e))
             log.error(f"Error during scraping: {e}")
             log.error(traceback.format_exc())
             return False

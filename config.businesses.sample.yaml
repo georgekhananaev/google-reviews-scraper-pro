@@ -1,0 +1,183 @@
+# =============================================================================
+# Businesses Configuration Examples
+# =============================================================================
+# Add a "businesses" section to your config.yaml.
+# Global settings (mongodb, s3, etc.) serve as defaults.
+# Each business can override any global setting.
+
+# =============================================================================
+# Example 1: Simple — all businesses share the same global settings
+# =============================================================================
+
+# businesses:
+#   - url: "https://maps.app.goo.gl/PLACE_1"
+#   - url: "https://maps.app.goo.gl/PLACE_2"
+#   - url: "https://maps.app.goo.gl/PLACE_3"
+
+# =============================================================================
+# Example 2: Per-business custom_params
+# =============================================================================
+
+# businesses:
+#   - url: "https://maps.app.goo.gl/PLACE_1"
+#     custom_params:
+#       company: "Hotel Sunrise"
+#       source: "Google Maps"
+#
+#   - url: "https://maps.app.goo.gl/PLACE_2"
+#     custom_params:
+#       company: "Hotel Moonlight"
+#       source: "Google Maps"
+
+# =============================================================================
+# Example 3: Different MongoDB per business
+# =============================================================================
+
+# businesses:
+#   - url: "https://maps.app.goo.gl/PLACE_1"
+#     custom_params:
+#       company: "Client A"
+#     mongodb:
+#       uri: "mongodb://server-a:27017"
+#       database: "client_a"
+#       collection: "reviews"
+#
+#   - url: "https://maps.app.goo.gl/PLACE_2"
+#     custom_params:
+#       company: "Client B"
+#     mongodb:
+#       uri: "mongodb://server-b:27017"
+#       database: "client_b"
+#       collection: "reviews"
+
+# =============================================================================
+# Example 4: Different S3 buckets per business
+# =============================================================================
+
+# businesses:
+#   - url: "https://maps.app.goo.gl/PLACE_1"
+#     custom_params:
+#       company: "Brand A"
+#     s3:
+#       aws_access_key_id: "AKIA..."
+#       aws_secret_access_key: "secret..."
+#       region_name: "us-east-1"
+#       bucket_name: "brand-a-reviews"
+#       prefix: "google/"
+#       profiles_folder: "profiles/"
+#       reviews_folder: "reviews/"
+#       delete_local_after_upload: false
+#       s3_base_url: ""
+#
+#   - url: "https://maps.app.goo.gl/PLACE_2"
+#     custom_params:
+#       company: "Brand B"
+#     s3:
+#       aws_access_key_id: "AKIA..."
+#       aws_secret_access_key: "secret..."
+#       region_name: "eu-west-1"
+#       bucket_name: "brand-b-reviews"
+#       prefix: "google/"
+#       profiles_folder: "profiles/"
+#       reviews_folder: "reviews/"
+#       delete_local_after_upload: false
+#       s3_base_url: ""
+
+# =============================================================================
+# Example 5: Full override — each business has its own everything
+# =============================================================================
+
+businesses:
+  - url: "https://maps.app.goo.gl/PLACE_1"
+    custom_params:
+      company: "Enterprise Client"
+      source: "Google Maps"
+    sort_by: "newest"
+    stop_on_match: true
+    stop_threshold: 5
+    overwrite_existing: false
+    convert_dates: true
+    download_images: true
+    image_dir: "review_images"
+    download_threads: 8
+    max_width: 1200
+    max_height: 1200
+    use_mongodb: true
+    mongodb:
+      uri: "mongodb://prod-mongo.enterprise.com:27017"
+      database: "enterprise_reviews"
+      collection: "google"
+    use_s3: true
+    s3:
+      aws_access_key_id: "AKIA..."
+      aws_secret_access_key: "secret..."
+      region_name: "eu-west-1"
+      bucket_name: "enterprise-media"
+      prefix: "reviews/google/"
+      profiles_folder: "profiles/"
+      reviews_folder: "reviews/"
+      delete_local_after_upload: true
+      s3_base_url: "https://cdn.enterprise.com/reviews/google"
+    replace_urls: true
+    custom_url_base: "https://cdn.enterprise.com/reviews/google"
+    custom_url_profiles: "/profiles/"
+    custom_url_reviews: "/reviews/"
+    preserve_original_urls: true
+    backup_to_json: true
+    json_path: "enterprise_reviews.json"
+
+  - url: "https://maps.app.goo.gl/PLACE_2"
+    custom_params:
+      company: "Startup Client"
+      source: "Google Maps"
+    sort_by: "relevance"
+    stop_on_match: false
+    stop_threshold: 3
+    overwrite_existing: false
+    convert_dates: true
+    download_images: true
+    image_dir: "review_images"
+    download_threads: 4
+    max_width: 800
+    max_height: 800
+    use_mongodb: true
+    mongodb:
+      uri: "mongodb://localhost:27017"
+      database: "startup_reviews"
+      collection: "google"
+    use_s3: false
+    replace_urls: false
+    preserve_original_urls: true
+    backup_to_json: true
+    json_path: "startup_reviews.json"
+
+# =============================================================================
+# Available override keys per business:
+#
+#   url                    (required)
+#   custom_params          company, source, or any custom fields
+#   sort_by                newest, highest, lowest, relevance
+#   stop_on_match          true/false
+#   stop_threshold         integer
+#   overwrite_existing     true/false
+#   convert_dates          true/false
+#   download_images        true/false
+#   image_dir              directory path
+#   download_threads       integer
+#   max_width              integer
+#   max_height             integer
+#   use_mongodb            true/false
+#   mongodb                uri, database, collection
+#   use_s3                 true/false
+#   s3                     aws_access_key_id, aws_secret_access_key,
+#                          region_name, bucket_name, prefix,
+#                          profiles_folder, reviews_folder,
+#                          delete_local_after_upload, s3_base_url
+#   replace_urls           true/false
+#   custom_url_base        URL string
+#   custom_url_profiles    path string
+#   custom_url_reviews     path string
+#   preserve_original_urls true/false
+#   backup_to_json         true/false
+#   json_path              file path
+# =============================================================================

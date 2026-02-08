@@ -8,10 +8,20 @@ All notable changes to Google Reviews Scraper Pro.
 - **SQLite database foundation** — new `ReviewDB` class with 7 tables (places, reviews, scrape_sessions, review_history, place_aliases, sync_checkpoints, schema_version), 40+ methods, optimistic locking, dual-hash change detection, and full audit trail.
 - **Database backend abstraction** — `DatabaseBackend` protocol with `SQLiteBackend` implementation (WAL mode, foreign keys, busy_timeout). Pre-ready for PostgreSQL/MySQL via config switch.
 - **Place ID extraction** — `extract_place_id()` handles CID, hex ID, short links, and SHA-256 fallback. `canonicalize_url()` normalizes URLs for alias matching.
-- **122 unit tests** across 5 new test files covering all database operations, place isolation, content hashing, resurrection, optimistic locking, and concurrency.
+- **Multi-business support** — new `businesses` config format with per-business overrides for MongoDB, S3, custom_params, and all other settings. Backward compatible with `urls` and `url`.
+- **CLI management commands** — `export` (JSON/CSV), `db-stats`, `clear`, `hide`, `restore`, `sync-status`, `prune-history`, and `migrate` (from JSON/MongoDB).
+- **Per-business image isolation** — images stored under `{image_dir}/{place_id}/profiles/` and `/reviews/` instead of flat directories.
+- **Per-business S3 paths** — uploads organized as `{prefix}/{place_id}/profiles/` and `/reviews/`.
+- **Incremental MongoDB sync** — only changed reviews (new/updated/restored) are synced; unchanged reviews are skipped.
+- **Data migration** — `migrate` command imports existing JSON files or MongoDB collections into the SQLite database.
+- **181 unit tests** across 10 test files covering database operations, CLI commands, config loading, migration, and start commands.
+- `config.sample.yaml` and `config.businesses.sample.yaml` with documented examples for all configuration options.
 
 ### Changed
 - Extracted `merge_review()` to `modules/data_logic.py` to prevent circular imports (backward-compatible re-export from `data_storage.py`).
+- Scraper pipeline now writes to SQLite as primary storage, with MongoDB and JSON as optional sync targets.
+- `place_id` field added to all review documents in MongoDB/JSON exports for per-business filtering.
+- README rewritten with all new CLI commands, multi-business config, output structure, and configuration reference table.
 
 ## [1.0.3] - 2026-02-07
 

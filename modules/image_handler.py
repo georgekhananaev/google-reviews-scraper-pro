@@ -36,13 +36,21 @@ class ImageHandler:
         self.custom_url_reviews = config.get("custom_url_reviews", "/reviews/")
         self.preserve_original_urls = config.get("preserve_original_urls", True)
 
-        # Subdirectories for different image types
+        # Subdirectories for different image types (per-place isolation)
+        self._place_id = None
         self.profile_dir = self.image_dir / "profiles"
         self.review_dir = self.image_dir / "reviews"
-        
+
         # Initialize S3 handler
         self.s3_handler = S3Handler(config)
         self.use_s3 = config.get("use_s3", False)
+
+    def set_place_id(self, place_id: str):
+        """Set place ID to organize images into per-business subdirectories."""
+        self._place_id = place_id
+        base = self.image_dir / place_id
+        self.profile_dir = base / "profiles"
+        self.review_dir = base / "reviews"
 
     def ensure_directories(self):
         """Ensure all image directories exist"""

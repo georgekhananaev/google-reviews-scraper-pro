@@ -72,6 +72,10 @@ class S3Handler:
             log.error(f"Error initializing S3 client: {e}")
             self.enabled = False
 
+    def set_place_id(self, place_id: str):
+        """Set place ID for per-business S3 path isolation."""
+        self._place_id = place_id
+
     def get_s3_url(self, key: str) -> str:
         """Generate S3 URL for uploaded file"""
         if self.s3_base_url:
@@ -145,9 +149,10 @@ class S3Handler:
         if not self.enabled:
             return None
             
-        # Create S3 key with appropriate folder structure
+        # Create S3 key with per-business folder structure
         folder = self.profiles_folder if is_profile else self.reviews_folder
-        s3_key = f"{self.prefix}{folder}/{filename}"
+        place_segment = f"{self._place_id}/" if getattr(self, "_place_id", None) else ""
+        s3_key = f"{self.prefix}{place_segment}{folder}/{filename}"
         
         return self.upload_file(local_path, s3_key)
 

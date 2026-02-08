@@ -1,0 +1,111 @@
+# =============================================================================
+# Google Maps Reviews Scraper Pro - Configuration
+# =============================================================================
+# Copy this file to config.yaml and adjust values to your needs.
+# All settings below show their default values unless noted otherwise.
+
+# -----------------------------------------------------------------------------
+# Scraper
+# -----------------------------------------------------------------------------
+headless: true                  # Run Chrome without visible browser window
+sort_by: "newest"               # Options: newest, highest, lowest, relevance
+stop_on_match: false            # Stop when first already-seen review is found
+stop_threshold: 3               # Consecutive unchanged batches before stopping
+overwrite_existing: false       # Overwrite existing reviews or merge only
+
+# -----------------------------------------------------------------------------
+# Database (SQLite - primary storage)
+# -----------------------------------------------------------------------------
+# Created automatically on first run. Reviews are isolated per place_id.
+db_path: "reviews.db"
+
+# -----------------------------------------------------------------------------
+# Data Processing
+# -----------------------------------------------------------------------------
+convert_dates: true             # Convert relative dates to ISO format
+
+# -----------------------------------------------------------------------------
+# Images
+# -----------------------------------------------------------------------------
+# Images are stored per-business: {image_dir}/{place_id}/profiles/ and /reviews/
+download_images: true
+image_dir: "review_images"
+download_threads: 4
+max_width: 1200
+max_height: 1200
+
+# -----------------------------------------------------------------------------
+# MongoDB Sync (optional - global defaults)
+# -----------------------------------------------------------------------------
+# All reviews stored in one collection with place_id for filtering.
+# Only changed reviews are synced (new, updated, restored).
+use_mongodb: false
+mongodb:
+  uri: "mongodb://localhost:27017"
+  database: "reviews"
+  collection: "google_reviews"
+
+# -----------------------------------------------------------------------------
+# S3 Upload (optional - global defaults)
+# -----------------------------------------------------------------------------
+# Images uploaded per-business: {prefix}/{place_id}/profiles/ and /reviews/
+use_s3: false
+s3:
+  aws_access_key_id: ""
+  aws_secret_access_key: ""
+  region_name: "us-east-1"
+  bucket_name: "my-bucket"
+  prefix: "google_reviews/"
+  profiles_folder: "profiles/"
+  reviews_folder: "reviews/"
+  delete_local_after_upload: false
+  s3_base_url: ""               # Custom base URL (empty = AWS default)
+
+# -----------------------------------------------------------------------------
+# URL Replacement (optional)
+# -----------------------------------------------------------------------------
+# Replace original Google image URLs with custom CDN/S3 URLs in documents.
+replace_urls: false
+custom_url_base: ""
+custom_url_profiles: "/profiles/"
+custom_url_reviews: "/reviews/"
+preserve_original_urls: true    # Keep originals in original_* fields
+
+# -----------------------------------------------------------------------------
+# JSON Backup (optional)
+# -----------------------------------------------------------------------------
+# Full snapshot exported after each scrape.
+backup_to_json: true
+json_path: "google_reviews.json"
+
+# -----------------------------------------------------------------------------
+# Businesses
+# -----------------------------------------------------------------------------
+# Each entry requires a url. All other fields are optional overrides
+# that replace the global defaults above for that specific business.
+#
+# Simple setup (just URLs, uses all global defaults):
+#   businesses:
+#     - url: "https://maps.app.goo.gl/PLACE_1"
+#     - url: "https://maps.app.goo.gl/PLACE_2"
+#
+# Advanced setup (per-business overrides):
+businesses:
+  - url: "https://maps.app.goo.gl/PLACE_1"
+    custom_params:
+      company: "Company A"
+      source: "Google Maps"
+
+  - url: "https://maps.app.goo.gl/PLACE_2"
+    custom_params:
+      company: "Company B"
+      source: "Google Maps"
+    # Override MongoDB for this business (different server/database)
+    # mongodb:
+    #   uri: "mongodb://other-server:27017"
+    #   database: "company_b"
+    #   collection: "reviews"
+    # Override S3 for this business (different bucket)
+    # s3:
+    #   bucket_name: "company-b-bucket"
+    #   prefix: "reviews/"

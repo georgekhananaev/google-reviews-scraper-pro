@@ -2,14 +2,15 @@
 Configuration management for Google Maps Reviews Scraper.
 """
 
+import copy
 import logging
+import os
 from pathlib import Path
 from typing import Dict, Any
 
 import yaml
 
 # Configure logging - can be overridden by environment variable
-import os
 log_level = getattr(logging, os.environ.get('LOG_LEVEL', 'INFO').upper(), logging.INFO)
 logging.basicConfig(level=log_level, format="[%(asctime)s] %(levelname)s: %(message)s")
 log = logging.getLogger("scraper")
@@ -19,7 +20,9 @@ DEFAULT_CONFIG_PATH = Path("config.yaml")
 
 # Default configuration - will be overridden by config file
 DEFAULT_CONFIG = {
-    "url": "https://maps.app.goo.gl/6tkNMDjcj3SS6LJe9",
+    "url": "",
+    "urls": [],
+    "businesses": [],
     "headless": True,
     "sort_by": "relevance",
     "stop_on_match": False,
@@ -46,13 +49,15 @@ DEFAULT_CONFIG = {
     "custom_params": {  # Custom parameters to add to each document
         "company": "Thaitours",  # Default example
         "source": "Google Maps"  # Default example
-    }
+    },
+    "db_path": "reviews.db",
+    "stop_threshold": 3,
 }
 
 
 def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
     """Load configuration from YAML file or use defaults"""
-    config = DEFAULT_CONFIG.copy()
+    config = copy.deepcopy(DEFAULT_CONFIG)
 
     if config_path.exists():
         try:
