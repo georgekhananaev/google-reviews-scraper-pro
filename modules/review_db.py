@@ -320,7 +320,8 @@ class ReviewDB:
         return [self._deserialize_review(r) for r in rows]
 
     def upsert_review(self, place_id: str, review: Dict[str, Any],
-                      session_id: int = None, max_retries: int = 3) -> str:
+                      session_id: int = None, max_retries: int = 3,
+                      scrape_mode: str = "update") -> str:
         """
         Insert or update a single review.
 
@@ -340,7 +341,7 @@ class ReviewDB:
             content_hash = self.compute_content_hash(
                 review.get("text", ""),
                 review.get("rating", 0),
-                review.get("review_date", "")
+                review.get("date", "")
             )
             engagement_hash = self.compute_engagement_hash(
                 review.get("likes", 0),
@@ -379,7 +380,7 @@ class ReviewDB:
         new_content_hash = self.compute_content_hash(
             review.get("text", ""),
             review.get("rating", 0),
-            review.get("review_date", "")
+            review.get("date", "")
         )
         new_engagement_hash = self.compute_engagement_hash(
             review.get("likes", 0),
@@ -391,6 +392,15 @@ class ReviewDB:
         content_changed = new_content_hash != old_content_hash
         engagement_changed = new_engagement_hash != old_engagement_hash
         was_deleted = existing.get("is_deleted", 0) == 1
+
+        # "new_only" mode: skip all updates to existing reviews (but resurrect deleted)
+        if scrape_mode == "new_only" and not was_deleted:
+            self.backend.execute(
+                "UPDATE reviews SET last_seen_session = ? WHERE review_id = ? AND place_id = ?",
+                (session_id, review_id, place_id)
+            )
+            self.backend.commit()
+            return "unchanged"
 
         if not content_changed and not engagement_changed and not was_deleted:
             # No changes — just update last_seen
@@ -487,14 +497,15 @@ class ReviewDB:
         return action
 
     def flush_batch(self, place_id: str, batch: List[Dict[str, Any]],
-                    session_id: int) -> Dict[str, int]:
+                    session_id: int, scrape_mode: str = "update") -> Dict[str, int]:
         """
         Flush a batch of reviews to the database in a single transaction.
         Returns: {'new': N, 'updated': N, 'restored': N, 'unchanged': N}
         """
         stats = {"new": 0, "updated": 0, "restored": 0, "unchanged": 0}
         for review in batch:
-            result = self.upsert_review(place_id, review, session_id)
+            result = self.upsert_review(place_id, review, session_id,
+                                        scrape_mode=scrape_mode)
             stats[result] = stats.get(result, 0) + 1
 
         # Update place total_reviews
@@ -524,9 +535,14 @@ class ReviewDB:
         return row["content_hash"] != new_content_hash
 
     @staticmethod
-    def compute_content_hash(text: str, rating: float, review_date: str) -> str:
-        """Compute SHA-256 hash of stable review content."""
-        content = f"{text}|{rating}|{review_date}"
+    def compute_content_hash(text: str, rating: float, raw_date: str) -> str:
+        """Compute SHA-256 hash of stable review content.
+
+        Uses the raw date string (e.g. "2 months ago") rather than the parsed
+        ISO timestamp, because relative dates parsed via datetime.now() change
+        every second and would cause false "updated" results on every scrape.
+        """
+        content = f"{text}|{rating}|{raw_date}"
         return hashlib.sha256(content.encode()).hexdigest()
 
     @staticmethod

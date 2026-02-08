@@ -9,9 +9,23 @@
 # -----------------------------------------------------------------------------
 headless: true                  # Run Chrome without visible browser window
 sort_by: "newest"               # Options: newest, highest, lowest, relevance
-stop_on_match: false            # Stop when first already-seen review is found
-stop_threshold: 3               # Consecutive unchanged batches before stopping
-overwrite_existing: false       # Overwrite existing reviews or merge only
+
+# Scrape mode — controls how reviews are processed:
+#   "new_only"  — only insert new reviews, skip existing entirely
+#   "update"    — insert new + update changed reviews (default)
+#   "full"      — re-process all reviews through upsert pipeline
+scrape_mode: "update"
+
+# Early stop — stop after N consecutive fully-matched scroll batches.
+# A "batch" = all reviews discovered in one scroll iteration.
+# A batch is "matched" when EVERY review in it is unchanged in the DB.
+# Set to 0 to disable early stop (scroll until exhaustion).
+stop_threshold: 3
+
+# Scroll limits
+max_reviews: 0                  # 0 = unlimited
+max_scroll_attempts: 50         # Max scroll iterations
+scroll_idle_limit: 15           # Max idle iterations with zero new cards
 
 # -----------------------------------------------------------------------------
 # Database (SQLite - primary storage)

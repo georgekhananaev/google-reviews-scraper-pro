@@ -93,9 +93,11 @@ businesses:
       company: "Enterprise Client"
       source: "Google Maps"
     sort_by: "newest"
-    stop_on_match: true
+    scrape_mode: "update"
     stop_threshold: 5
-    overwrite_existing: false
+    max_reviews: 0
+    max_scroll_attempts: 50
+    scroll_idle_limit: 15
     convert_dates: true
     download_images: true
     image_dir: "review_images"
@@ -131,9 +133,8 @@ businesses:
       company: "Startup Client"
       source: "Google Maps"
     sort_by: "relevance"
-    stop_on_match: false
+    scrape_mode: "update"
     stop_threshold: 3
-    overwrite_existing: false
     convert_dates: true
     download_images: true
     image_dir: "review_images"
@@ -157,9 +158,11 @@ businesses:
 #   url                    (required)
 #   custom_params          company, source, or any custom fields
 #   sort_by                newest, highest, lowest, relevance
-#   stop_on_match          true/false
-#   stop_threshold         integer
-#   overwrite_existing     true/false
+#   scrape_mode            new_only, update, full
+#   stop_threshold         integer (0 = disabled)
+#   max_reviews            integer (0 = unlimited)
+#   max_scroll_attempts    integer
+#   scroll_idle_limit      integer
 #   convert_dates          true/false
 #   download_images        true/false
 #   image_dir              directory path

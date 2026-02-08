@@ -137,3 +137,38 @@ class TestParseArguments:
         with patch("sys.argv", ["start.py", "--custom-params", '{"company":"Test"}']):
             args = parse_arguments()
             assert args.custom_params == {"company": "Test"}
+
+    def test_scrape_mode_flag(self):
+        with patch("sys.argv", ["start.py", "--scrape-mode", "new_only"]):
+            args = parse_arguments()
+            assert args.scrape_mode == "new_only"
+
+    def test_scrape_mode_full(self):
+        with patch("sys.argv", ["start.py", "scrape", "--scrape-mode", "full"]):
+            args = parse_arguments()
+            assert args.scrape_mode == "full"
+
+    def test_max_reviews_flag(self):
+        with patch("sys.argv", ["start.py", "--max-reviews", "500"]):
+            args = parse_arguments()
+            assert args.max_reviews == 500
+
+    def test_max_scroll_attempts_flag(self):
+        with patch("sys.argv", ["start.py", "--max-scroll-attempts", "100"]):
+            args = parse_arguments()
+            assert args.max_scroll_attempts == 100
+
+    def test_scroll_idle_limit_flag(self):
+        with patch("sys.argv", ["start.py", "--scroll-idle-limit", "20"]):
+            args = parse_arguments()
+            assert args.scroll_idle_limit == 20
+
+    def test_legacy_overwrite_still_works(self):
+        with patch("sys.argv", ["start.py", "--overwrite"]):
+            args = parse_arguments()
+            assert args.overwrite_existing is True
+
+    def test_legacy_stop_on_match_still_works(self):
+        with patch("sys.argv", ["start.py", "--stop-on-match"]):
+            args = parse_arguments()
+            assert args.stop_on_match is True

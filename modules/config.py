@@ -25,8 +25,12 @@ DEFAULT_CONFIG = {
     "businesses": [],
     "headless": True,
     "sort_by": "relevance",
+    "scrape_mode": "update",
     "stop_on_match": False,
     "overwrite_existing": False,
+    "max_reviews": 0,
+    "max_scroll_attempts": 50,
+    "scroll_idle_limit": 15,
     "use_mongodb": True,
     "mongodb": {
         "uri": "mongodb://localhost:27017",
@@ -53,6 +57,41 @@ DEFAULT_CONFIG = {
     "db_path": "reviews.db",
     "stop_threshold": 3,
 }
+
+
+_VALID_SCRAPE_MODES = {"new_only", "update", "full"}
+
+
+def resolve_aliases(config: Dict[str, Any]) -> None:
+    """Map legacy config keys to new equivalents (mutates *config* in place)."""
+    has_scrape_mode = "scrape_mode" in config and config["scrape_mode"] != DEFAULT_CONFIG["scrape_mode"]
+
+    if config.get("overwrite_existing") and not has_scrape_mode:
+        config["scrape_mode"] = "full"
+        log.warning(
+            "Deprecated: 'overwrite_existing: true' mapped to 'scrape_mode: full'. "
+            "Please update your config."
+        )
+
+    if config.get("stop_on_match") and config.get("stop_threshold", 0) == 0:
+        config["stop_threshold"] = 3
+        log.warning(
+            "Deprecated: 'stop_on_match: true' mapped to 'stop_threshold: 3'. "
+            "Please update your config."
+        )
+
+
+def _validate_config(config: Dict[str, Any]) -> None:
+    """Validate config values, falling back to safe defaults on bad input."""
+    mode = config.get("scrape_mode", "update")
+    if mode not in _VALID_SCRAPE_MODES:
+        log.warning("Invalid scrape_mode '%s', falling back to 'update'", mode)
+        config["scrape_mode"] = "update"
+
+    for key in ("max_reviews", "stop_threshold", "max_scroll_attempts", "scroll_idle_limit"):
+        val = config.get(key)
+        if not isinstance(val, int) or val < 0:
+            config[key] = DEFAULT_CONFIG[key]
 
 
 def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
@@ -84,4 +123,6 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
             yaml.dump(config, f, default_flow_style=False)
             log.info(f"Created default configuration file at {config_path}")
 
+    resolve_aliases(config)
+    _validate_config(config)
     return config

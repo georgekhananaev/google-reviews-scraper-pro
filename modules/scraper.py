@@ -171,7 +171,7 @@ class GoogleReviewsScraper:
         self.mongodb = MongoDBStorage(config) if self.use_mongodb else None
         self.json_storage = JSONStorage(config)
         self.backup_to_json = config.get("backup_to_json", True)
-        self.overwrite_existing = config.get("overwrite_existing", False)
+        self.scrape_mode = config.get("scrape_mode", "update")
         db_path = config.get("db_path", "reviews.db")
         self.review_db = ReviewDB(db_path)
 
@@ -995,45 +995,46 @@ class GoogleReviewsScraper:
                         log.debug(f"Error processing menu item: {e}")
                         continue
 
-                log.info(f"Found {len(visible_items)} visible menu items")
-                for i, (_, text) in enumerate(visible_items):
-                    log.debug(f"  Menu item {i + 1}: '{text}'")
+                # Deduplicate: keep one entry per underlying DOM element,
+                # skip container elements whose text spans multiple labels
+                seen_elems = set()
+                deduped = []
+                for elem, text in visible_items:
+                    eid = elem.id  # Selenium's internal element id (stable per session)
+                    if eid in seen_elems or not text or "\n" in text:
+                        continue
+                    seen_elems.add(eid)
+                    deduped.append((elem, text))
+                visible_items = deduped
 
-                # Determine the target menu item based on sort method
+                log.info(f"Found {len(visible_items)} menu items: {[t for _, t in visible_items]}")
+
+                # --- Strategy A: text-first matching (robust against reordering) ---
                 target_item = None
                 matched_text = None
+                wanted_labels = [lbl.lower() for lbl in SORT_OPTIONS.get(method, [])]
 
-                # Log all available menu items for debugging
-                log.info(f"Available menu items: {[text for _, text in visible_items]}")
+                for item, text in visible_items:
+                    if text.lower() in wanted_labels:
+                        target_item = item
+                        matched_text = text
+                        log.info(f"Matched sort '{method}' by text: '{text}'")
+                        break
 
-                # Use position-based selection (most reliable for Google Maps)
-                position_map = {
-                    "relevance": 0,  # Usually the first option
-                    "newest": 1,  # Usually the second option
-                    "highest": 2,  # Usually the third option
-                    "lowest": 3  # Usually the fourth option
-                }
-
-                pos = position_map.get(method, -1)
-                if pos >= 0 and pos < len(visible_items):
-                    target_item, matched_text = visible_items[pos]
-                    log.info(f"Selected menu item at position {pos + 1}: '{matched_text}' for sort method '{method}'")
-
-                    # Validate the selection makes sense
-                    wanted_labels = SORT_OPTIONS.get(method, [])
-                    text_clean = matched_text.lower()
-
-                    # Check if selected text contains any of the expected keywords
-                    valid_selection = False
-                    for label in wanted_labels:
-                        if label.lower() in text_clean or text_clean in label.lower():
-                            valid_selection = True
-                            break
-
-                    if not valid_selection:
-                        log.warning(f"WARNING: Selected '{matched_text}' doesn't match expected '{method}' - might be wrong sort!")
-                else:
-                    log.warning(f"Position {pos} not available in menu (only {len(visible_items)} items)")
+                # --- Strategy B: position fallback (only if text match failed) ---
+                if not target_item:
+                    position_map = {
+                        "relevance": 0,
+                        "newest": 1,
+                        "highest": 2,
+                        "lowest": 3,
+                    }
+                    pos = position_map.get(method, -1)
+                    if 0 <= pos < len(visible_items):
+                        target_item, matched_text = visible_items[pos]
+                        log.info(f"Position fallback {pos + 1}: '{matched_text}' for '{method}'")
+                    else:
+                        log.warning(f"Could not find sort '{method}' by text or position")
 
                 # 3. If target found, click it
                 if target_item:
@@ -1086,8 +1087,14 @@ class GoogleReviewsScraper:
                             continue
 
                     if click_success:
-                        log.info(f"Successfully set sort order to '{method}'")
-                        return True
+                        # Validate: does the matched text belong to our wanted labels?
+                        if matched_text and matched_text.lower() in wanted_labels:
+                            log.info(f"Sort confirmed: '{method}'")
+                            return True
+                        log.warning(
+                            f"Sort clicked '{matched_text}' but could not confirm it matches '{method}'"
+                        )
+                        return False
                     else:
                         log.warning(f"Failed to click menu item - keeping default sort order")
                 else:
@@ -1246,8 +1253,10 @@ class GoogleReviewsScraper:
         url = self.config.get("url")
         headless = self.config.get("headless", True)
         sort_by = self.config.get("sort_by", "relevance")
-        stop_on_match = self.config.get("stop_on_match", False)
         stop_threshold = self.config.get("stop_threshold", 3)
+        max_reviews = self.config.get("max_reviews", 0)
+        max_scroll_attempts = self.config.get("max_scroll_attempts", 50)
+        scroll_idle_limit = self.config.get("scroll_idle_limit", 15)
 
         log.info(f"Starting scraper with settings: headless={headless}, sort_by={sort_by}")
         log.info(f"URL: {url}")
@@ -1283,8 +1292,8 @@ class GoogleReviewsScraper:
             session_id = self.review_db.start_session(place_id, sort_by)
             log.info(f"Registered place: {place_id} ({place_name})")
 
-            # Load seen IDs from DB (empty for overwrite mode)
-            if self.overwrite_existing:
+            # Load seen IDs from DB (empty for full mode to re-process everything)
+            if self.scrape_mode == "full":
                 seen = set()
             else:
                 seen = self.review_db.get_review_ids(place_id)
@@ -1308,10 +1317,21 @@ class GoogleReviewsScraper:
                 log.warning("URL doesn't contain 'review' - might not be on reviews page")
 
             # Try to set sort - but don't fail if it doesn't work
+            sort_ok = False
             try:
-                self.set_sort(driver, sort_by)
+                sort_ok = bool(self.set_sort(driver, sort_by))
             except Exception as sort_error:
                 log.warning(f"Sort failed but continuing: {sort_error}")
+
+            # Early-stop only makes sense when reviews are sorted by newest.
+            # If sort failed or sort_by isn't "newest", disable it.
+            if stop_threshold > 0 and (not sort_ok or sort_by != "newest"):
+                log.warning(
+                    "Disabling early stop (stop_threshold=%d) — "
+                    "reviews are not confirmed sorted by newest",
+                    stop_threshold,
+                )
+                stop_threshold = 0
 
             # Add a longer wait after setting sort to allow results to load
             log.info("Waiting for reviews to render...")
@@ -1345,7 +1365,7 @@ class GoogleReviewsScraper:
             pbar = tqdm(desc="Scraped", ncols=80, initial=len(seen))
             idle = 0
             processed_ids = set()
-            consecutive_unchanged = 0
+            consecutive_matched_batches = 0
 
             # Prefetch selector to avoid repeated lookups
             try:
@@ -1355,9 +1375,9 @@ class GoogleReviewsScraper:
                 log.warning(f"Error setting up scroll script: {e}")
                 scroll_script = "window.scrollBy(0, 300);"  # Fallback to simple scrolling
 
-            max_attempts = 50  # Increased from 10 to 50 for very patient scrolling
+            max_attempts = max_scroll_attempts
             attempts = 0
-            max_idle = 15  # Increased from 3 to 15 - much more patience for lazy-loaded reviews
+            max_idle = scroll_idle_limit
             consecutive_no_cards = 0  # Track how many times we find zero cards
             last_scroll_position = 0
             scroll_stuck_count = 0
@@ -1387,12 +1407,15 @@ class GoogleReviewsScraper:
                     else:
                         consecutive_no_cards = 0  # Reset counter when we find cards
 
+                    batch_seen_count = 0  # Cards already in DB (for batch stop)
                     for c in cards:
                         try:
                             cid = c.get_attribute("data-review-id")
                             if not cid or cid in processed_ids:
                                 continue
-                            if cid in seen and not stop_on_match:
+                            processed_ids.add(cid)
+                            if cid in seen:
+                                batch_seen_count += 1
                                 continue
                             fresh_cards.append(c)
                         except StaleElementReferenceException:
@@ -1401,10 +1424,12 @@ class GoogleReviewsScraper:
                             log.debug(f"Error getting review ID: {e}")
                             continue
 
+                    batch_total = len(fresh_cards) + batch_seen_count
+                    batch_unchanged = batch_seen_count
+
                     for card in fresh_cards:
                         try:
                             raw = RawReview.from_card(card)
-                            processed_ids.add(raw.id)
                         except StaleElementReferenceException:
                             continue
                         except Exception:
@@ -1413,7 +1438,6 @@ class GoogleReviewsScraper:
                             try:
                                 raw_id = card.get_attribute("data-review-id") or ""
                                 raw = RawReview(id=raw_id, text="", lang="und")
-                                processed_ids.add(raw_id)
                             except StaleElementReferenceException:
                                 continue
 
@@ -1432,28 +1456,38 @@ class GoogleReviewsScraper:
                             "photos": raw.photos,
                         }
                         result = self.review_db.upsert_review(
-                            place_id, review_dict, session_id
+                            place_id, review_dict, session_id,
+                            scrape_mode=self.scrape_mode,
                         )
                         batch_stats[result] = batch_stats.get(result, 0) + 1
                         if result != "unchanged":
                             changed_ids.add(raw.id)
+                        if result == "unchanged":
+                            batch_unchanged += 1
                         seen.add(raw.id)
                         pbar.update(1)
                         idle = 0
                         attempts = 0
 
-                        if stop_on_match:
-                            if result == "unchanged":
-                                consecutive_unchanged += 1
-                                if consecutive_unchanged >= stop_threshold:
-                                    log.info(
-                                        "Stopping: %d consecutive unchanged reviews",
-                                        stop_threshold,
-                                    )
-                                    idle = 999
-                                    break
-                            else:
-                                consecutive_unchanged = 0
+                        if max_reviews > 0 and len(seen) >= max_reviews:
+                            log.info("Reached max_reviews limit (%d), stopping.", max_reviews)
+                            idle = 999
+                            break
+
+                    # Batch-level stop: entire scroll iteration was unchanged.
+                    # Require min 3 reviews in the batch to avoid false stops
+                    # from tiny tail batches during lazy loading.
+                    if stop_threshold > 0 and batch_total >= 3:
+                        if batch_unchanged == batch_total:
+                            consecutive_matched_batches += 1
+                            log.info("Fully matched batch %d/%d (%d reviews)",
+                                     consecutive_matched_batches, stop_threshold, batch_total)
+                            if consecutive_matched_batches >= stop_threshold:
+                                log.info("Stopping: %d consecutive fully-matched batches",
+                                         stop_threshold)
+                                idle = 999
+                        else:
+                            consecutive_matched_batches = 0
 
                     if idle >= max_idle:
                         log.info(f"Stopping: No new reviews found after {max_idle} scroll attempts")

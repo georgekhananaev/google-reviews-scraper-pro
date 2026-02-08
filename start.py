@@ -18,10 +18,12 @@ def _apply_scrape_overrides(config, args):
     overrides = {
         "headless": args.headless if args.headless else None,
         "sort_by": args.sort_by,
-        "stop_on_match": True if args.stop_on_match else None,
+        "scrape_mode": getattr(args, "scrape_mode", None),
         "stop_threshold": getattr(args, "stop_threshold", None),
+        "max_reviews": getattr(args, "max_reviews", None),
+        "max_scroll_attempts": getattr(args, "max_scroll_attempts", None),
+        "scroll_idle_limit": getattr(args, "scroll_idle_limit", None),
         "url": args.url,
-        "overwrite_existing": True if args.overwrite_existing else None,
         "use_mongodb": getattr(args, "use_mongodb", None),
         "convert_dates": getattr(args, "convert_dates", None),
         "download_images": getattr(args, "download_images", None),
@@ -34,6 +36,13 @@ def _apply_scrape_overrides(config, args):
         "custom_url_reviews": getattr(args, "custom_url_reviews", None),
         "preserve_original_urls": getattr(args, "preserve_original_urls", None),
     }
+
+    # Legacy CLI flags → new config keys
+    if getattr(args, "overwrite_existing", False) and not getattr(args, "scrape_mode", None):
+        overrides["scrape_mode"] = "full"
+    if getattr(args, "stop_on_match", False):
+        overrides["stop_threshold"] = overrides.get("stop_threshold") or 3
+
     for key, value in overrides.items():
         if value is not None:
             config[key] = value
@@ -71,6 +80,7 @@ def _resolve_businesses(config):
 def _build_business_config(base_config, overrides):
     """Merge per-business overrides into a copy of the global config."""
     import copy
+    from modules.config import resolve_aliases
     merged = copy.deepcopy(base_config)
     for key, value in overrides.items():
         if key == "url":
@@ -79,6 +89,7 @@ def _build_business_config(base_config, overrides):
             merged[key].update(value)
         else:
             merged[key] = value
+    resolve_aliases(merged)
     return merged
 
 

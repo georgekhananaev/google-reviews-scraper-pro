@@ -14,14 +14,25 @@ All notable changes to Google Reviews Scraper Pro.
 - **Per-business S3 paths** — uploads organized as `{prefix}/{place_id}/profiles/` and `/reviews/`.
 - **Incremental MongoDB sync** — only changed reviews (new/updated/restored) are synced; unchanged reviews are skipped.
 - **Data migration** — `migrate` command imports existing JSON files or MongoDB collections into the SQLite database.
-- **181 unit tests** across 10 test files covering database operations, CLI commands, config loading, migration, and start commands.
+- **`scrape_mode` enum** — replaces `overwrite_existing` and `stop_on_match` booleans with a single `scrape_mode` setting: `"new_only"` (skip existing), `"update"` (default, insert new + update changed), `"full"` (re-process all).
+- **Batch-level early stop** — `stop_threshold` counts consecutive fully-matched scroll batches (entire batch unchanged) instead of individual reviews. Minimum 3 reviews per batch to prevent false stops from tiny tail batches.
+- **Configurable scroll limits** — `max_reviews`, `max_scroll_attempts`, and `scroll_idle_limit` exposed as config parameters (previously hardcoded).
+- **Sort safety guard** — `stop_threshold` auto-disabled at runtime when sort-by-newest fails or `sort_by != "newest"`, preventing incorrect early stops.
+- **Legacy config alias resolution** — `overwrite_existing: true` maps to `scrape_mode: "full"`, `stop_on_match: true` maps to `stop_threshold: 3` with deprecation warnings. New names always win.
+- 181 unit tests across 10 test files covering database operations, CLI commands, config loading, migration, and start commands.
 - `config.sample.yaml` and `config.businesses.sample.yaml` with documented examples for all configuration options.
+
+### Fixed
+- **Content hash volatility** — `compute_content_hash()` now uses the raw date string (e.g., "2 months ago") instead of the parsed ISO timestamp, which changed every second due to `datetime.now()` and caused all reviews to show as "updated" on every scrape.
+- **Sort menu duplicate selection** — Google Maps menu items had duplicate DOM elements (parent + child). Deduplication now uses Selenium's stable element ID and filters out container elements with newlines. Sort selection uses text-first matching against localized labels with position-based fallback.
+- **Review card double-processing** — cards already in the database were being re-parsed and upserted on every scroll iteration (each review processed twice per session). Cards in `seen` are now counted as "unchanged" for batch stop without re-upsert, eliminating hash flip-flop and halving DB writes.
 
 ### Changed
 - Extracted `merge_review()` to `modules/data_logic.py` to prevent circular imports (backward-compatible re-export from `data_storage.py`).
 - Scraper pipeline now writes to SQLite as primary storage, with MongoDB and JSON as optional sync targets.
 - `place_id` field added to all review documents in MongoDB/JSON exports for per-business filtering.
 - README rewritten with all new CLI commands, multi-business config, output structure, and configuration reference table.
+- Repeat scrapes with no changes now complete in ~42s (down from ~109s) thanks to batch-level early stop.
 
 ## [1.0.3] - 2026-02-07
 

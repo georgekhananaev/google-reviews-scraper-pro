@@ -41,83 +41,106 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _build_scrape_parser(sub: argparse._SubParsersAction) -> None:
-    """Build the 'scrape' subcommand."""
-    sp = sub.add_parser("scrape", help="Scrape Google Maps reviews")
-    _add_common_args(sp)
-    sp.add_argument(
+def _add_scrape_args(parser: argparse.ArgumentParser) -> None:
+    """Add scrape-specific arguments (shared between subcommand and top-level)."""
+    parser.add_argument(
         "-q", "--headless", action="store_true",
         help="run Chrome in the background",
     )
-    sp.add_argument(
+    parser.add_argument(
         "-s", "--sort", dest="sort_by",
         choices=("newest", "highest", "lowest", "relevance"),
         default=None, help="sorting order for reviews",
     )
-    sp.add_argument(
-        "--stop-on-match", action="store_true",
-        help="stop scrolling after N consecutive unchanged reviews",
+    parser.add_argument(
+        "--scrape-mode", type=str, default=None,
+        choices=("new_only", "update", "full"),
+        help="scrape mode: new_only, update (default), or full",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--stop-threshold", type=int, default=None,
-        help="number of consecutive unchanged reviews before stopping (default: 3)",
+        help="consecutive fully-matched scroll batches before stopping (default: 3)",
     )
-    sp.add_argument(
+    parser.add_argument(
+        "--max-reviews", type=int, default=None,
+        help="maximum number of reviews to scrape (0 = unlimited)",
+    )
+    parser.add_argument(
+        "--max-scroll-attempts", type=int, default=None,
+        help="maximum scroll iterations (default: 50)",
+    )
+    parser.add_argument(
+        "--scroll-idle-limit", type=int, default=None,
+        help="max idle iterations with zero new cards (default: 15)",
+    )
+    parser.add_argument(
         "--url", type=str, default=None,
         help="Google Maps URL to scrape",
     )
-    sp.add_argument(
-        "--overwrite", action="store_true", dest="overwrite_existing",
-        help="overwrite existing reviews instead of appending",
+    # Legacy flags — hidden but still accepted for backward compatibility
+    parser.add_argument(
+        "--stop-on-match", action="store_true", default=False,
+        help=argparse.SUPPRESS,
     )
-    sp.add_argument(
+    parser.add_argument(
+        "--overwrite", action="store_true", dest="overwrite_existing",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--use-mongodb", type=_str_to_bool, default=None,
         help="whether to use MongoDB for storage (true/false)",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--convert-dates", type=_str_to_bool, default=None,
         help="convert string dates to MongoDB Date objects (true/false)",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--download-images", type=_str_to_bool, default=None,
         help="download images from reviews (true/false)",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--image-dir", type=str, default=None,
         help="directory to store downloaded images",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--download-threads", type=int, default=None,
         help="number of threads for downloading images",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--store-local-paths", type=_str_to_bool, default=None,
         help="whether to store local image paths (true/false)",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--replace-urls", type=_str_to_bool, default=None,
         help="whether to replace original URLs (true/false)",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--custom-url-base", type=str, default=None,
         help="base URL for replacement",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--custom-url-profiles", type=str, default=None,
         help="path for profile images",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--custom-url-reviews", type=str, default=None,
         help="path for review images",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--preserve-original-urls", type=_str_to_bool, default=None,
         help="whether to preserve original URLs (true/false)",
     )
-    sp.add_argument(
+    parser.add_argument(
         "--custom-params", type=str, default=None,
         help='JSON string with custom parameters (e.g. \'{"company":"MyBiz"}\')',
     )
+
+
+def _build_scrape_parser(sub: argparse._SubParsersAction) -> None:
+    """Build the 'scrape' subcommand."""
+    sp = sub.add_parser("scrape", help="Scrape Google Maps reviews")
+    _add_common_args(sp)
+    _add_scrape_args(sp)
 
 
 def _build_export_parser(sub: argparse._SubParsersAction) -> None:
@@ -222,43 +245,7 @@ def parse_arguments():
 
     # If no subcommand given, add top-level scrape args for backward compat
     _add_common_args(ap)
-    ap.add_argument("-q", "--headless", action="store_true",
-                    help="run Chrome in the background")
-    ap.add_argument("-s", "--sort", dest="sort_by",
-                    choices=("newest", "highest", "lowest", "relevance"),
-                    default=None, help="sorting order for reviews")
-    ap.add_argument("--stop-on-match", action="store_true",
-                    help="stop scrolling after N consecutive unchanged reviews")
-    ap.add_argument("--stop-threshold", type=int, default=None,
-                    help="consecutive unchanged reviews before stopping (default: 3)")
-    ap.add_argument("--url", type=str, default=None,
-                    help="Google Maps URL to scrape")
-    ap.add_argument("--overwrite", action="store_true", dest="overwrite_existing",
-                    help="overwrite existing reviews instead of appending")
-    ap.add_argument("--use-mongodb", type=_str_to_bool, default=None,
-                    help="whether to use MongoDB (true/false)")
-    ap.add_argument("--convert-dates", type=_str_to_bool, default=None,
-                    help="convert string dates (true/false)")
-    ap.add_argument("--download-images", type=_str_to_bool, default=None,
-                    help="download images from reviews (true/false)")
-    ap.add_argument("--image-dir", type=str, default=None,
-                    help="directory to store downloaded images")
-    ap.add_argument("--download-threads", type=int, default=None,
-                    help="number of threads for downloading images")
-    ap.add_argument("--store-local-paths", type=_str_to_bool, default=None,
-                    help="store local image paths (true/false)")
-    ap.add_argument("--replace-urls", type=_str_to_bool, default=None,
-                    help="replace original URLs (true/false)")
-    ap.add_argument("--custom-url-base", type=str, default=None,
-                    help="base URL for replacement")
-    ap.add_argument("--custom-url-profiles", type=str, default=None,
-                    help="path for profile images")
-    ap.add_argument("--custom-url-reviews", type=str, default=None,
-                    help="path for review images")
-    ap.add_argument("--preserve-original-urls", type=_str_to_bool, default=None,
-                    help="preserve original URLs (true/false)")
-    ap.add_argument("--custom-params", type=str, default=None,
-                    help='JSON string with custom parameters')
+    _add_scrape_args(ap)
 
     args = ap.parse_args()
 

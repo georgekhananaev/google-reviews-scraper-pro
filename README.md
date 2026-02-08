@@ -137,9 +137,11 @@ See `config.sample.yaml` for all available settings and `config.businesses.sampl
 |---------|-----|---------|-------------|
 | **Scraper** | `headless` | `true` | Run Chrome without visible window |
 | | `sort_by` | `"newest"` | `newest`, `highest`, `lowest`, `relevance` |
-| | `stop_on_match` | `false` | Stop on first already-seen review |
-| | `stop_threshold` | `3` | Consecutive unchanged batches before stopping |
-| | `overwrite_existing` | `false` | Overwrite existing reviews or merge only |
+| | `scrape_mode` | `"update"` | `new_only`, `update`, or `full` |
+| | `stop_threshold` | `3` | Consecutive fully-matched scroll batches before stopping (0 = disabled) |
+| | `max_reviews` | `0` | Max reviews to scrape (0 = unlimited) |
+| | `max_scroll_attempts` | `50` | Max scroll iterations |
+| | `scroll_idle_limit` | `15` | Max idle iterations with zero new cards |
 | **Database** | `db_path` | `"reviews.db"` | SQLite database path (auto-created) |
 | **Processing** | `convert_dates` | `true` | Convert relative dates to ISO format |
 | **Images** | `download_images` | `true` | Download review/profile images |
@@ -174,7 +176,13 @@ python start.py
 python start.py --url "https://maps.app.goo.gl/YOUR_URL"
 
 # Headless + newest first + stop after 5 unchanged batches
-python start.py -q --sort newest --stop-on-match --stop-threshold 5
+python start.py -q --sort newest --stop-threshold 5
+
+# Only insert new reviews (skip existing)
+python start.py --scrape-mode new_only -q
+
+# Force full rescan of all reviews
+python start.py --scrape-mode full -q
 
 # Custom parameters via CLI
 python start.py --custom-params '{"company":"My Hotel","location":"Bangkok"}'

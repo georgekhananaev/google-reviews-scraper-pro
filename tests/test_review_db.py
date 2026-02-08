@@ -167,13 +167,13 @@ class TestDualHash:
     def test_content_change_detected(self, db):
         db.upsert_place("place1", "Test", "http://test")
         db.upsert_review("place1", _make_review())
-        new_hash = ReviewDB.compute_content_hash("Different text", 5.0, "2025-06-15")
+        new_hash = ReviewDB.compute_content_hash("Different text", 5.0, "3 months ago")
         assert db.review_changed("r1", "place1", new_hash)
 
     def test_likes_only_change_not_content_change(self, db):
         db.upsert_place("place1", "Test", "http://test")
         db.upsert_review("place1", _make_review())
-        same_hash = ReviewDB.compute_content_hash("Great place!", 5.0, "2025-06-15")
+        same_hash = ReviewDB.compute_content_hash("Great place!", 5.0, "3 months ago")
         assert not db.review_changed("r1", "place1", same_hash)
 
     def test_review_changed_not_found(self, db):
@@ -187,24 +187,24 @@ class TestStopOnMatch:
     def test_should_stop_after_threshold(self, db):
         db.upsert_place("place1", "Test", "http://test")
         db.upsert_review("place1", _make_review())
-        h = ReviewDB.compute_content_hash("Great place!", 5.0, "2025-06-15")
+        h = ReviewDB.compute_content_hash("Great place!", 5.0, "3 months ago")
         assert db.should_stop("r1", "place1", h, consecutive_unchanged=2, threshold=3)
 
     def test_should_not_stop_before_threshold(self, db):
         db.upsert_place("place1", "Test", "http://test")
         db.upsert_review("place1", _make_review())
-        h = ReviewDB.compute_content_hash("Great place!", 5.0, "2025-06-15")
+        h = ReviewDB.compute_content_hash("Great place!", 5.0, "3 months ago")
         assert not db.should_stop("r1", "place1", h, consecutive_unchanged=0, threshold=3)
 
     def test_should_not_stop_on_changed_review(self, db):
         db.upsert_place("place1", "Test", "http://test")
         db.upsert_review("place1", _make_review())
-        h = ReviewDB.compute_content_hash("Different text", 5.0, "2025-06-15")
+        h = ReviewDB.compute_content_hash("Different text", 5.0, "3 months ago")
         assert not db.should_stop("r1", "place1", h, consecutive_unchanged=5, threshold=3)
 
     def test_should_not_stop_new_review(self, db):
         db.upsert_place("place1", "Test", "http://test")
-        h = ReviewDB.compute_content_hash("New text", 5.0, "2025-06-15")
+        h = ReviewDB.compute_content_hash("New text", 5.0, "3 months ago")
         # New review = changed, should not stop
         assert not db.should_stop("new_review", "place1", h, consecutive_unchanged=5, threshold=3)
 
@@ -586,3 +586,100 @@ class TestHistoryManagement:
         db.upsert_review("place1", _make_review("r1"))
         deleted = db.prune_history(older_than_days=0)
         assert deleted >= 1
+
+
+class TestScrapeMode:
+    """Tests for scrape_mode parameter in upsert_review."""
+
+    def test_new_only_skips_existing(self, db):
+        """Existing unchanged review returns 'unchanged' without hash comparison."""
+        db.upsert_place("place1", "Test", "http://test")
+        db.upsert_review("place1", _make_review("r1"))
+        result = db.upsert_review(
+            "place1", _make_review("r1"), scrape_mode="new_only"
+        )
+        assert result == "unchanged"
+
+    def test_new_only_inserts_new(self, db):
+        """New review returns 'new' in new_only mode."""
+        db.upsert_place("place1", "Test", "http://test")
+        result = db.upsert_review(
+            "place1", _make_review("r1"), scrape_mode="new_only"
+        )
+        assert result == "new"
+
+    def test_new_only_resurrects_deleted(self, db):
+        """Deleted review returns 'restored' in new_only mode."""
+        db.upsert_place("place1", "Test", "http://test")
+        db.upsert_review("place1", _make_review("r1"))
+        db.hide_review("r1", "place1")
+        result = db.upsert_review(
+            "place1", _make_review("r1"), scrape_mode="new_only"
+        )
+        assert result == "restored"
+        assert db.get_review("r1", "place1")["is_deleted"] == 0
+
+    def test_new_only_skips_content_update(self, db):
+        """In new_only mode, content changes are NOT applied to existing reviews."""
+        db.upsert_place("place1", "Test", "http://test")
+        db.upsert_review("place1", _make_review("r1", text="Original"))
+        db.upsert_review(
+            "place1", _make_review("r1", text="Updated"),
+            scrape_mode="new_only",
+        )
+        review = db.get_review("r1", "place1")
+        assert "Original" in str(review["review_text"])
+
+    def test_update_mode_updates_content(self, db):
+        """Content change in update mode → 'updated'."""
+        db.upsert_place("place1", "Test", "http://test")
+        db.upsert_review("place1", _make_review("r1", text="Original"))
+        result = db.upsert_review(
+            "place1", _make_review("r1", text="Changed"),
+            scrape_mode="update",
+        )
+        assert result == "updated"
+
+    def test_update_mode_updates_engagement(self, db):
+        """Engagement change in update mode → 'updated'."""
+        db.upsert_place("place1", "Test", "http://test")
+        db.upsert_review("place1", _make_review("r1", likes=1))
+        result = db.upsert_review(
+            "place1", _make_review("r1", likes=100),
+            scrape_mode="update",
+        )
+        assert result == "updated"
+
+    def test_full_mode_same_as_update(self, db):
+        """Full mode upsert behavior matches update for content changes."""
+        db.upsert_place("place1", "Test", "http://test")
+        db.upsert_review("place1", _make_review("r1", text="Original"))
+        result = db.upsert_review(
+            "place1", _make_review("r1", text="Changed"),
+            scrape_mode="full",
+        )
+        assert result == "updated"
+
+    def test_flush_batch_passes_scrape_mode(self, db):
+        """flush_batch respects scrape_mode parameter."""
+        db.upsert_place("place1", "Test", "http://test")
+        db.upsert_review("place1", _make_review("r1"))
+        session_id = db.start_session("place1")
+        # In new_only mode, r1 with changed text should still be "unchanged"
+        batch = [_make_review("r1", text="Different")]
+        stats = db.flush_batch("place1", batch, session_id, scrape_mode="new_only")
+        assert stats["unchanged"] == 1
+
+    def test_hash_uses_raw_date_not_parsed(self, db):
+        """Changing review_date (parsed ISO) should NOT cause 'updated' when
+        raw date string stays the same — prevents false updates from relative
+        date parsing volatility (e.g. '2 months ago' → different ISO each run)."""
+        db.upsert_place("place1", "Test", "http://test")
+        db.upsert_review("place1", _make_review(
+            "r1", date="2 months ago", review_date="2025-12-08T14:00:00+00:00"
+        ))
+        # Same raw date, different parsed ISO (simulates next-day scrape)
+        result = db.upsert_review("place1", _make_review(
+            "r1", date="2 months ago", review_date="2025-12-09T10:30:00+00:00"
+        ))
+        assert result == "unchanged"
