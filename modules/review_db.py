@@ -305,6 +305,15 @@ class ReviewDB:
             return self._deserialize_review(row)
         return None
 
+    def count_reviews(self, place_id: str, include_deleted: bool = False) -> int:
+        """Count reviews for a place (used for pagination totals)."""
+        sql = "SELECT COUNT(*) as cnt FROM reviews WHERE place_id = ?"
+        params: list = [place_id]
+        if not include_deleted:
+            sql += " AND is_deleted = 0"
+        row = self.backend.fetchone(sql, tuple(params))
+        return row["cnt"] if row else 0
+
     def get_reviews(self, place_id: str, limit: int = None,
                     offset: int = 0, include_deleted: bool = False) -> List[Dict[str, Any]]:
         """Get reviews for a place with pagination."""

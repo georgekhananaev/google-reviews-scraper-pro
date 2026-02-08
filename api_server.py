@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
 FastAPI server for Google Reviews Scraper.
-Provides REST API endpoints to trigger and manage scraping jobs.
+Provides REST API endpoints to trigger and manage scraping jobs,
+query reviews/places from SQLite, manage API keys, and view audit logs.
 """
 
+import json
 import logging
 import asyncio
 import os
@@ -11,7 +13,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Dict, Any, List, Optional
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Depends, Security, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Depends, Security, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, HttpUrl, Field
@@ -19,7 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from modules.config import load_config
-from modules.job_manager import JobManager, JobStatus, ScrapingJob
+from modules.job_manager import JobManager, JobStatus
 
 # --- Load config for API settings ---
 _config = load_config()
@@ -66,11 +68,17 @@ async def lifespan(app: FastAPI):
     log.info("Starting Google Reviews Scraper API Server")
     job_manager = JobManager(max_concurrent_jobs=3)
 
+    db_path = _config.get("db_path", "reviews.db")
+
     # Initialize API key DB
     from modules.api_keys import ApiKeyDB
-    db_path = _config.get("db_path", "reviews.db")
     app.state.api_key_db = ApiKeyDB(db_path)
     log.info("API key database initialized")
+
+    # Initialize Review DB (read-only queries, safe with WAL mode)
+    from modules.review_db import ReviewDB
+    app.state.review_db = ReviewDB(db_path)
+    log.info("Review database initialized")
 
     # Start auto-cleanup task
     asyncio.create_task(cleanup_jobs_periodically())
@@ -79,6 +87,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     log.info("Shutting down Google Reviews Scraper API Server")
+    if hasattr(app.state, "review_db"):
+        app.state.review_db.close()
     if hasattr(app.state, "api_key_db"):
         app.state.api_key_db.close()
     if job_manager:
@@ -89,7 +99,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Google Reviews Scraper API",
     description="REST API for triggering and managing Google Maps review scraping jobs",
-    version="1.1.1",
+    version="1.2.0",
     lifespan=lifespan
 )
 
@@ -146,7 +156,31 @@ app.add_middleware(
 )
 
 
-# Pydantic models for API
+# ---------------------------------------------------------------------------
+# Dependency helpers
+# ---------------------------------------------------------------------------
+
+def get_review_db(request: Request):
+    """Get ReviewDB from app state."""
+    db = getattr(request.app.state, "review_db", None)
+    if db is None:
+        raise HTTPException(status_code=500, detail="Review database not initialized")
+    return db
+
+
+def get_api_key_db(request: Request):
+    """Get ApiKeyDB from app state."""
+    db = getattr(request.app.state, "api_key_db", None)
+    if db is None:
+        raise HTTPException(status_code=500, detail="API key database not initialized")
+    return db
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models
+# ---------------------------------------------------------------------------
+
+# --- Jobs ---
 class ScrapeRequest(BaseModel):
     """Request model for starting a scrape job"""
     url: HttpUrl = Field(..., description="Google Maps URL to scrape")
@@ -184,7 +218,137 @@ class JobStatsResponse(BaseModel):
     max_concurrent_jobs: int
 
 
+# --- Places ---
+class PlaceResponse(BaseModel):
+    place_id: str
+    place_name: Optional[str] = None
+    original_url: str
+    resolved_url: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    first_seen: str
+    last_scraped: Optional[str] = None
+    total_reviews: int = 0
+
+
+# --- Reviews ---
+class ReviewResponse(BaseModel):
+    review_id: str
+    place_id: str
+    author: Optional[str] = None
+    rating: Optional[float] = None
+    review_text: Optional[Any] = None
+    review_date: Optional[str] = None
+    raw_date: Optional[str] = None
+    likes: int = 0
+    user_images: Optional[Any] = None
+    s3_images: Optional[Any] = None
+    profile_url: Optional[str] = None
+    profile_picture: Optional[str] = None
+    s3_profile_picture: Optional[str] = None
+    owner_responses: Optional[Any] = None
+    created_date: str
+    last_modified: str
+    last_seen_session: Optional[int] = None
+    last_changed_session: Optional[int] = None
+    is_deleted: int = 0
+    content_hash: Optional[str] = None
+    engagement_hash: Optional[str] = None
+    row_version: int = 1
+
+
+class PaginatedReviewsResponse(BaseModel):
+    place_id: str
+    total: int
+    limit: int
+    offset: int
+    reviews: List[ReviewResponse]
+
+
+class ReviewHistoryEntry(BaseModel):
+    history_id: int
+    review_id: str
+    place_id: str
+    session_id: Optional[int] = None
+    actor: str
+    action: str
+    changed_fields: Optional[Any] = None
+    old_content_hash: Optional[str] = None
+    new_content_hash: Optional[str] = None
+    old_engagement_hash: Optional[str] = None
+    new_engagement_hash: Optional[str] = None
+    timestamp: str
+
+
+# --- API Keys ---
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(..., description="Descriptive name for the API key")
+
+
+class ApiKeyCreateResponse(BaseModel):
+    id: int
+    name: str
+    raw_key: str
+    message: str = "Store this key securely — it cannot be retrieved again"
+
+
+class ApiKeyResponse(BaseModel):
+    id: int
+    name: str
+    key_prefix: str
+    created_at: str
+    last_used_at: Optional[str] = None
+    usage_count: int = 0
+    is_active: int = 1
+
+
+class ApiKeyStatsResponse(BaseModel):
+    id: int
+    name: str
+    key_prefix: str
+    created_at: str
+    last_used_at: Optional[str] = None
+    usage_count: int = 0
+    is_active: int = 1
+    recent_requests: List[Dict[str, Any]] = []
+
+
+# --- Audit ---
+class AuditLogEntry(BaseModel):
+    id: int
+    timestamp: str
+    key_id: Optional[int] = None
+    key_name: Optional[str] = None
+    endpoint: str
+    method: str
+    client_ip: Optional[str] = None
+    status_code: Optional[int] = None
+    response_time_ms: Optional[int] = None
+
+
+# --- DB Stats ---
+class PlaceStatRow(BaseModel):
+    place_id: str
+    place_name: Optional[str] = None
+    total_reviews: int = 0
+    last_scraped: Optional[str] = None
+
+
+class DbStatsResponse(BaseModel):
+    places_count: int = 0
+    reviews_count: int = 0
+    scrape_sessions_count: int = 0
+    review_history_count: int = 0
+    sync_checkpoints_count: int = 0
+    place_aliases_count: int = 0
+    db_size_bytes: int = 0
+    places: List[PlaceStatRow] = []
+
+
+# ---------------------------------------------------------------------------
 # Background task for periodic cleanup
+# ---------------------------------------------------------------------------
+
 async def cleanup_jobs_periodically():
     """Periodically clean up old jobs"""
     while True:
@@ -193,20 +357,75 @@ async def cleanup_jobs_periodically():
             job_manager.cleanup_old_jobs(max_age_hours=24)
 
 
-# API Endpoints
+# ---------------------------------------------------------------------------
+# Helper to strip internal keys from deserialized reviews
+# ---------------------------------------------------------------------------
 
-@app.get("/", summary="API Health Check")
+def _clean_review(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip _-prefixed internal keys added by _deserialize_review()."""
+    return {k: v for k, v in row.items() if not k.startswith("_")}
+
+
+# ===========================================================================
+# Routers
+# ===========================================================================
+
+# --- System Router ---
+system_router = APIRouter(tags=["System"])
+
+
+@system_router.get("/", summary="API Health Check")
 async def root():
     """Health check endpoint"""
     return {
         "message": "Google Reviews Scraper API is running",
         "status": "healthy",
-        "version": "1.1.1"
+        "version": "1.2.0"
     }
 
 
-@app.post("/scrape", response_model=Dict[str, str], summary="Start Scraping Job",
-          dependencies=[Depends(require_api_key)])
+@system_router.get("/db-stats", response_model=DbStatsResponse, summary="Database Statistics",
+                    dependencies=[Depends(require_api_key)])
+async def get_db_stats(review_db=Depends(get_review_db)):
+    """Get ReviewDB statistics (places, reviews, sessions, db size)."""
+    stats = review_db.get_stats()
+    place_rows = [
+        PlaceStatRow(
+            place_id=p["place_id"],
+            place_name=p.get("place_name"),
+            total_reviews=p.get("total_reviews", 0),
+            last_scraped=p.get("last_scraped"),
+        )
+        for p in stats.get("places", [])
+    ]
+    return DbStatsResponse(
+        places_count=stats.get("places_count", 0),
+        reviews_count=stats.get("reviews_count", 0),
+        scrape_sessions_count=stats.get("scrape_sessions_count", 0),
+        review_history_count=stats.get("review_history_count", 0),
+        sync_checkpoints_count=stats.get("sync_checkpoints_count", 0),
+        place_aliases_count=stats.get("place_aliases_count", 0),
+        db_size_bytes=stats.get("db_size_bytes", 0),
+        places=place_rows,
+    )
+
+
+@system_router.post("/cleanup", summary="Manual Job Cleanup",
+                     dependencies=[Depends(require_api_key)])
+async def cleanup_jobs(max_age_hours: int = Query(24, description="Maximum age in hours", ge=1)):
+    """Manually trigger cleanup of old completed/failed jobs"""
+    if not job_manager:
+        raise HTTPException(status_code=500, detail="Job manager not initialized")
+
+    job_manager.cleanup_old_jobs(max_age_hours=max_age_hours)
+    return {"message": f"Cleaned up jobs older than {max_age_hours} hours"}
+
+
+# --- Jobs Router ---
+jobs_router = APIRouter(tags=["Jobs"], dependencies=[Depends(require_api_key)])
+
+
+@jobs_router.post("/scrape", response_model=Dict[str, str], summary="Start Scraping Job")
 async def start_scrape(request: ScrapeRequest, background_tasks: BackgroundTasks):
     """
     Start a new scraping job in the background.
@@ -216,24 +435,16 @@ async def start_scrape(request: ScrapeRequest, background_tasks: BackgroundTasks
     if not job_manager:
         raise HTTPException(status_code=500, detail="Job manager not initialized")
 
-    # Prepare config overrides
     config_overrides = {}
-
-    # Only include non-None values
     for field, value in request.dict().items():
         if value is not None and field != "url":
             config_overrides[field] = value
 
-    # Convert URL to string
     url = str(request.url)
 
     try:
-        # Create job
         job_id = job_manager.create_job(url, config_overrides)
-
-        # Start job immediately if possible
         started = job_manager.start_job(job_id)
-
         log.info(f"Created scraping job {job_id} for URL: {url}")
 
         return {
@@ -247,8 +458,7 @@ async def start_scrape(request: ScrapeRequest, background_tasks: BackgroundTasks
         raise HTTPException(status_code=500, detail=f"Failed to create scraping job: {str(e)}")
 
 
-@app.get("/jobs/{job_id}", response_model=JobResponse, summary="Get Job Status",
-         dependencies=[Depends(require_api_key)])
+@jobs_router.get("/jobs/{job_id}", response_model=JobResponse, summary="Get Job Status")
 async def get_job(job_id: str):
     """Get detailed information about a specific job"""
     if not job_manager:
@@ -261,8 +471,7 @@ async def get_job(job_id: str):
     return JobResponse(**job.to_dict())
 
 
-@app.get("/jobs", response_model=List[JobResponse], summary="List Jobs",
-         dependencies=[Depends(require_api_key)])
+@jobs_router.get("/jobs", response_model=List[JobResponse], summary="List Jobs")
 async def list_jobs(
     status: Optional[JobStatus] = Query(None, description="Filter by job status"),
     limit: int = Query(100, description="Maximum number of jobs to return", ge=1, le=1000)
@@ -275,8 +484,7 @@ async def list_jobs(
     return [JobResponse(**job.to_dict()) for job in jobs]
 
 
-@app.post("/jobs/{job_id}/start", summary="Start Pending Job",
-          dependencies=[Depends(require_api_key)])
+@jobs_router.post("/jobs/{job_id}/start", summary="Start Pending Job")
 async def start_job(job_id: str):
     """Start a pending job manually"""
     if not job_manager:
@@ -296,8 +504,7 @@ async def start_job(job_id: str):
     return {"message": "Job started successfully"}
 
 
-@app.post("/jobs/{job_id}/cancel", summary="Cancel Job",
-          dependencies=[Depends(require_api_key)])
+@jobs_router.post("/jobs/{job_id}/cancel", summary="Cancel Job")
 async def cancel_job(job_id: str):
     """Cancel a pending or running job"""
     if not job_manager:
@@ -313,8 +520,7 @@ async def cancel_job(job_id: str):
     return {"message": "Job cancelled successfully"}
 
 
-@app.delete("/jobs/{job_id}", summary="Delete Job",
-            dependencies=[Depends(require_api_key)])
+@jobs_router.delete("/jobs/{job_id}", summary="Delete Job")
 async def delete_job(job_id: str):
     """Delete a job from the system (only terminal-state jobs)"""
     if not job_manager:
@@ -334,26 +540,152 @@ async def delete_job(job_id: str):
     return {"message": "Job deleted successfully"}
 
 
-@app.get("/stats", response_model=JobStatsResponse, summary="Get Job Statistics",
-         dependencies=[Depends(require_api_key)])
-async def get_stats():
-    """Get job manager statistics"""
-    if not job_manager:
-        raise HTTPException(status_code=500, detail="Job manager not initialized")
-
-    stats = job_manager.get_stats()
-    return JobStatsResponse(**stats)
+# --- Places Router ---
+places_router = APIRouter(tags=["Places"], dependencies=[Depends(require_api_key)])
 
 
-@app.post("/cleanup", summary="Manual Job Cleanup",
-          dependencies=[Depends(require_api_key)])
-async def cleanup_jobs(max_age_hours: int = Query(24, description="Maximum age in hours", ge=1)):
-    """Manually trigger cleanup of old completed/failed jobs"""
-    if not job_manager:
-        raise HTTPException(status_code=500, detail="Job manager not initialized")
+@places_router.get("/places", response_model=List[PlaceResponse], summary="List Places")
+async def list_places(review_db=Depends(get_review_db)):
+    """List all registered places from the database."""
+    places = review_db.list_places()
+    return [PlaceResponse(**p) for p in places]
 
-    job_manager.cleanup_old_jobs(max_age_hours=max_age_hours)
-    return {"message": f"Cleaned up jobs older than {max_age_hours} hours"}
+
+@places_router.get("/places/{place_id}", response_model=PlaceResponse, summary="Get Place")
+async def get_place(place_id: str, review_db=Depends(get_review_db)):
+    """Get details for a specific place."""
+    place = review_db.get_place(place_id)
+    if not place:
+        raise HTTPException(status_code=404, detail="Place not found")
+    return PlaceResponse(**place)
+
+
+# --- Reviews Router ---
+reviews_router = APIRouter(tags=["Reviews"], dependencies=[Depends(require_api_key)])
+
+
+@reviews_router.get("/reviews/{place_id}", response_model=PaginatedReviewsResponse,
+                     summary="List Reviews for Place")
+async def list_reviews(
+    place_id: str,
+    limit: int = Query(50, ge=1, le=1000, description="Reviews per page"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    include_deleted: bool = Query(False, description="Include soft-deleted reviews"),
+    review_db=Depends(get_review_db),
+):
+    """Get paginated reviews for a place."""
+    place = review_db.get_place(place_id)
+    if not place:
+        raise HTTPException(status_code=404, detail="Place not found")
+
+    total = review_db.count_reviews(place_id, include_deleted=include_deleted)
+    rows = review_db.get_reviews(place_id, limit=limit, offset=offset,
+                                  include_deleted=include_deleted)
+    reviews = [ReviewResponse(**_clean_review(r)) for r in rows]
+    return PaginatedReviewsResponse(
+        place_id=place_id, total=total, limit=limit, offset=offset, reviews=reviews,
+    )
+
+
+@reviews_router.get("/reviews/{place_id}/{review_id}", response_model=ReviewResponse,
+                     summary="Get Single Review")
+async def get_review(place_id: str, review_id: str, review_db=Depends(get_review_db)):
+    """Get a single review by ID."""
+    row = review_db.get_review(review_id, place_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Review not found")
+    return ReviewResponse(**_clean_review(row))
+
+
+@reviews_router.get("/reviews/{place_id}/{review_id}/history",
+                     response_model=List[ReviewHistoryEntry],
+                     summary="Get Review Change History")
+async def get_review_history(place_id: str, review_id: str,
+                              review_db=Depends(get_review_db)):
+    """Get the full change history for a specific review."""
+    row = review_db.get_review(review_id, place_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    history = review_db.get_review_history(review_id, place_id)
+    entries = []
+    for h in history:
+        h = dict(h)
+        # Deserialize changed_fields JSON string
+        if isinstance(h.get("changed_fields"), str):
+            try:
+                h["changed_fields"] = json.loads(h["changed_fields"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        entries.append(ReviewHistoryEntry(**h))
+    return entries
+
+
+# --- API Keys Router ---
+api_keys_router = APIRouter(tags=["API Keys"], dependencies=[Depends(require_api_key)])
+
+
+@api_keys_router.post("/api-keys", response_model=ApiKeyCreateResponse,
+                       summary="Create API Key")
+async def create_api_key(body: ApiKeyCreateRequest, api_key_db=Depends(get_api_key_db)):
+    """Create a new API key. The raw key is returned only once."""
+    key_id, raw_key = api_key_db.create_key(body.name)
+    return ApiKeyCreateResponse(id=key_id, name=body.name, raw_key=raw_key)
+
+
+@api_keys_router.get("/api-keys", response_model=List[ApiKeyResponse],
+                      summary="List API Keys")
+async def list_api_keys(api_key_db=Depends(get_api_key_db)):
+    """List all API keys (hashes are never exposed)."""
+    keys = api_key_db.list_keys()
+    return [ApiKeyResponse(**k) for k in keys]
+
+
+@api_keys_router.delete("/api-keys/{key_id}", summary="Revoke API Key")
+async def revoke_api_key(key_id: int, api_key_db=Depends(get_api_key_db)):
+    """Revoke an API key (immediate, cannot be undone)."""
+    revoked = api_key_db.revoke_key(key_id)
+    if not revoked:
+        raise HTTPException(status_code=404, detail="Key not found or already revoked")
+    return {"message": "API key revoked successfully"}
+
+
+@api_keys_router.get("/api-keys/{key_id}/stats", response_model=ApiKeyStatsResponse,
+                      summary="API Key Stats")
+async def get_api_key_stats(key_id: int, api_key_db=Depends(get_api_key_db)):
+    """Get detailed stats and recent requests for an API key."""
+    stats = api_key_db.get_key_stats(key_id)
+    if not stats:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return ApiKeyStatsResponse(**stats)
+
+
+# --- Audit Log Router ---
+audit_router = APIRouter(tags=["Audit Log"], dependencies=[Depends(require_api_key)])
+
+
+@audit_router.get("/audit-log", response_model=List[AuditLogEntry],
+                   summary="Query Audit Log")
+async def query_audit_log(
+    key_id: Optional[int] = Query(None, description="Filter by API key ID"),
+    limit: int = Query(50, ge=1, le=1000, description="Max entries to return"),
+    since: Optional[str] = Query(None, description="Only entries after this ISO timestamp"),
+    api_key_db=Depends(get_api_key_db),
+):
+    """Query the API request audit log."""
+    entries = api_key_db.query_audit_log(key_id=key_id, limit=limit, since=since)
+    return [AuditLogEntry(**e) for e in entries]
+
+
+# ===========================================================================
+# Register all routers
+# ===========================================================================
+app.include_router(system_router)
+app.include_router(jobs_router)
+app.include_router(places_router)
+app.include_router(reviews_router)
+app.include_router(api_keys_router)
+app.include_router(audit_router)
 
 
 if __name__ == "__main__":

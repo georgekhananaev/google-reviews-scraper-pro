@@ -1,6 +1,6 @@
 # Google Reviews Scraper Pro (2026)
 
-![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.1.1-brightgreen)
+![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.2.0-brightgreen)
 ![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 ![Last Update](https://img.shields.io/badge/Last%20Updated-February%202026-red)
@@ -272,6 +272,100 @@ python api_server.py
 # Interactive docs: http://localhost:8000/docs
 ```
 
+Endpoints are organized into 6 tagged groups (visible in `/docs`):
+
+### System
+
+```bash
+# Health check (no auth)
+curl http://localhost:8000/
+
+# Database statistics (places, reviews, sessions, db size)
+curl -H "X-API-Key: grs_your_key_here" http://localhost:8000/db-stats
+
+# Manual job cleanup
+curl -X POST -H "X-API-Key: grs_your_key_here" "http://localhost:8000/cleanup?max_age_hours=24"
+```
+
+### Jobs
+
+```bash
+# Start a scraping job
+curl -X POST "http://localhost:8000/scrape" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: grs_your_key_here" \
+  -d '{"url": "https://maps.app.goo.gl/YOUR_URL", "headless": true}'
+
+# List all jobs (with optional status filter)
+curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs"
+
+# Check job status
+curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}"
+
+# Start a pending job manually
+curl -X POST -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}/start"
+
+# Cancel a running job
+curl -X POST -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}/cancel"
+
+# Delete a completed/failed/cancelled job
+curl -X DELETE -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}"
+```
+
+### Places
+
+```bash
+# List all places
+curl -H "X-API-Key: grs_your_key_here" http://localhost:8000/places
+
+# Get a specific place
+curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/places/{place_id}"
+```
+
+### Reviews
+
+```bash
+# Paginated reviews for a place
+curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/reviews/{place_id}?limit=10&offset=0"
+
+# Get a single review
+curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/reviews/{place_id}/{review_id}"
+
+# Get review change history
+curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/reviews/{place_id}/{review_id}/history"
+```
+
+### API Keys
+
+Manage API keys via REST (in addition to CLI commands):
+
+```bash
+# Create a new API key
+curl -X POST "http://localhost:8000/api-keys" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: grs_your_key_here" \
+  -d '{"name": "production-frontend"}'
+
+# List all keys
+curl -H "X-API-Key: grs_your_key_here" http://localhost:8000/api-keys
+
+# Revoke a key
+curl -X DELETE -H "X-API-Key: grs_your_key_here" "http://localhost:8000/api-keys/{key_id}"
+
+# Key stats with recent requests
+curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/api-keys/{key_id}/stats"
+```
+
+### Audit Log
+
+```bash
+# Query audit log
+curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/audit-log?limit=50"
+
+# Filter by key ID
+curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/audit-log?key_id=1&limit=20"
+```
+
 ### Authentication (SQLite-Managed API Keys)
 
 API keys are managed via SQLite — hashed with SHA-256 and stored in `reviews.db`. Every API request is audit-logged with key ID, endpoint, response time, and client IP.
@@ -299,26 +393,6 @@ python start.py prune-audit --dry-run
 ```
 
 When at least one active DB key exists, all endpoints require a valid `X-API-Key` header. If no keys exist, auth is disabled (open access).
-
-```bash
-# Start a scraping job (with auth)
-curl -X POST "http://localhost:8000/scrape" \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: grs_your_key_here" \
-  -d '{"url": "https://maps.app.goo.gl/YOUR_URL", "headless": true}'
-
-# Check job status
-curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}"
-
-# List all jobs
-curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs"
-
-# Cancel a running job (actually stops the scraper)
-curl -X POST -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}/cancel"
-
-# Delete a completed/failed/cancelled job
-curl -X DELETE -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}"
-```
 
 ### CORS Configuration
 
