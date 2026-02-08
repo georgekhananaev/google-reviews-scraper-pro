@@ -49,6 +49,8 @@ logs.db
 *.sqlite
 *.sqlite3
 *.db
+*.db-shm
+*.db-wal
 docs/AGENTS_LOG
 docs/plans/
 
