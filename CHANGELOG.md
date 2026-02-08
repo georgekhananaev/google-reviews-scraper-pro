@@ -4,6 +4,8 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-02-09
+
 ### Added
 - **Unified S3 provider config** — `s3.provider` key with presets for `"aws"` (default), `"minio"` (auto-sets `path_style: true`, `acl: ""`), and `"r2"` (auto-sets `region_name: "auto"`, `acl: ""`). Explicit config always overrides preset defaults.
 - **S3 endpoint_url support** — `s3.endpoint_url` param for connecting to MinIO, R2, or any S3-compatible storage. URL generation adapts automatically.
@@ -34,7 +36,7 @@ All notable changes to Google Reviews Scraper Pro.
 - Removed `api_key` from config files (`config.sample.yaml`, `config.yaml`). CORS `allowed_origins` remains.
 - Removed legacy `stop_on_match` and `overwrite_existing` fields from `ScrapeRequest` model (replaced by `scrape_mode`).
 - `GET /stats` renamed to `GET /db-stats` — now returns ReviewDB statistics instead of job-only stats. Job stats remain available via `GET /jobs`.
-- API version bumped to 1.2.0.
+- API version bumped to 1.2.1.
 
 ## [1.1.1] - 2026-02-08
 

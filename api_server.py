@@ -100,7 +100,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Google Reviews Scraper API",
     description="REST API for triggering and managing Google Maps review scraping jobs",
-    version="1.2.0",
+    version="1.2.1",
     lifespan=lifespan
 )
 
@@ -348,7 +348,7 @@ async def root():
     return {
         "message": "Google Reviews Scraper API is running",
         "status": "healthy",
-        "version": "1.2.0"
+        "version": "1.2.1"
     }
 
 
