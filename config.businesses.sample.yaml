@@ -59,29 +59,35 @@
 #     custom_params:
 #       company: "Brand A"
 #     s3:
+#       provider: "aws"
 #       aws_access_key_id: "AKIA..."
 #       aws_secret_access_key: "secret..."
 #       region_name: "us-east-1"
 #       bucket_name: "brand-a-reviews"
 #       prefix: "google/"
-#       profiles_folder: "profiles/"
-#       reviews_folder: "reviews/"
-#       delete_local_after_upload: false
-#       s3_base_url: ""
 #
 #   - url: "https://maps.app.goo.gl/PLACE_2"
 #     custom_params:
 #       company: "Brand B"
 #     s3:
-#       aws_access_key_id: "AKIA..."
-#       aws_secret_access_key: "secret..."
-#       region_name: "eu-west-1"
+#       provider: "minio"
+#       endpoint_url: "http://minio.internal:9000"
+#       aws_access_key_id: "minioadmin"
+#       aws_secret_access_key: "minioadmin"
 #       bucket_name: "brand-b-reviews"
 #       prefix: "google/"
-#       profiles_folder: "profiles/"
-#       reviews_folder: "reviews/"
-#       delete_local_after_upload: false
-#       s3_base_url: ""
+#
+#   - url: "https://maps.app.goo.gl/PLACE_3"
+#     custom_params:
+#       company: "Brand C"
+#     s3:
+#       provider: "r2"
+#       endpoint_url: "https://ACCOUNT_ID.r2.cloudflarestorage.com"
+#       aws_access_key_id: "R2_ACCESS_KEY"
+#       aws_secret_access_key: "R2_SECRET_KEY"
+#       bucket_name: "brand-c-reviews"
+#       s3_base_url: "https://pub-HASH.r2.dev"
+#       prefix: "google/"
 
 # =============================================================================
 # Example 5: Full override — each business has its own everything
@@ -113,6 +119,7 @@ businesses:
       sync_mode: "update"
     use_s3: true
     s3:
+      provider: "aws"              # "aws", "minio", or "r2"
       aws_access_key_id: "AKIA..."
       aws_secret_access_key: "secret..."
       region_name: "eu-west-1"
@@ -122,6 +129,9 @@ businesses:
       reviews_folder: "reviews/"
       delete_local_after_upload: true
       s3_base_url: "https://cdn.enterprise.com/reviews/google"
+      # endpoint_url: ""           # Set for MinIO/R2
+      # path_style: false          # Set true for MinIO
+      # acl: "public-read"         # Empty = skip ACL (R2)
       sync_mode: "update"
     replace_urls: true
     store_local_paths: true
@@ -177,8 +187,10 @@ businesses:
 #   mongodb                uri, database, collection, sync_mode,
 #                          tls_allow_invalid_certs
 #   use_s3                 true/false
-#   s3                     aws_access_key_id, aws_secret_access_key,
+#   s3                     provider (aws/minio/r2),
+#                          aws_access_key_id, aws_secret_access_key,
 #                          region_name, bucket_name, prefix,
+#                          endpoint_url, path_style, acl,
 #                          profiles_folder, reviews_folder,
 #                          delete_local_after_upload, s3_base_url,
 #                          sync_mode

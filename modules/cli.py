@@ -17,6 +17,7 @@ Subcommands:
   api-key-stats   Show API key usage statistics
   audit-log       Query the API audit log
   prune-audit     Prune old audit log entries
+  logs            View structured JSON log files
 """
 
 import argparse
@@ -275,6 +276,24 @@ def _build_api_key_parsers(sub: argparse._SubParsersAction) -> None:
     sp.add_argument("--dry-run", action="store_true", help="show count without deleting")
 
 
+def _build_logs_parser(sub: argparse._SubParsersAction) -> None:
+    """Build the 'logs' subcommand."""
+    sp = sub.add_parser("logs", help="View structured JSON log files")
+    _add_common_args(sp)
+    sp.add_argument(
+        "--lines", "-n", type=int, default=50,
+        help="number of lines to show (default: 50)",
+    )
+    sp.add_argument(
+        "--level", type=str, default=None,
+        help="filter by log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    )
+    sp.add_argument(
+        "--follow", "-f", action="store_true",
+        help="follow log output (like tail -f)",
+    )
+
+
 def parse_arguments():
     """Parse command line arguments with subcommands."""
     ap = argparse.ArgumentParser(
@@ -287,6 +306,7 @@ def parse_arguments():
     _build_export_parser(sub)
     _build_management_parsers(sub)
     _build_api_key_parsers(sub)
+    _build_logs_parser(sub)
 
     # If no subcommand given, add top-level scrape args for backward compat
     _add_common_args(ap)

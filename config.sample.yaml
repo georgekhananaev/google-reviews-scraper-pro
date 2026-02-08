@@ -79,8 +79,12 @@ mongodb:
 # S3 Upload (optional - global defaults)
 # -----------------------------------------------------------------------------
 # Images uploaded per-business: {prefix}/{place_id}/profiles/ and /reviews/
+# Supports AWS S3, MinIO, and Cloudflare R2 via provider presets.
 use_s3: false
 s3:
+  # Provider presets: "aws" (default), "minio", "r2"
+  # Each preset applies sensible defaults; explicit keys always override.
+  provider: "aws"
   aws_access_key_id: ""
   aws_secret_access_key: ""
   region_name: "us-east-1"
@@ -89,12 +93,40 @@ s3:
   profiles_folder: "profiles/"
   reviews_folder: "reviews/"
   delete_local_after_upload: false
-  s3_base_url: ""               # Custom base URL (empty = AWS default)
+  s3_base_url: ""               # Custom base URL (empty = auto-generated)
+  # endpoint_url: ""            # Custom endpoint (MinIO/R2 require this)
+  # path_style: false           # Path-style addressing (MinIO requires true)
+  # acl: "public-read"          # ACL for uploads (empty = skip ACL entirely)
   # Sync mode — controls how images are uploaded to S3:
   #   "new_only"  — list existing S3 keys, skip files already uploaded
   #   "update"    — upload all local files, overwrite if exists (default)
   #   "full"      — same as "update"
   sync_mode: "update"
+
+  # --- MinIO example ---
+  # provider: "minio"
+  # endpoint_url: "http://localhost:9000"
+  # aws_access_key_id: "minioadmin"
+  # aws_secret_access_key: "minioadmin"
+  # bucket_name: "reviews"
+  # # path_style and acl are auto-set by "minio" preset
+
+  # --- Cloudflare R2 example ---
+  # provider: "r2"
+  # endpoint_url: "https://<account-id>.r2.cloudflarestorage.com"
+  # aws_access_key_id: "<R2-access-key>"
+  # aws_secret_access_key: "<R2-secret-key>"
+  # bucket_name: "reviews"
+  # s3_base_url: "https://pub-<hash>.r2.dev"  # Public R2 bucket URL
+  # # region_name and acl are auto-set by "r2" preset
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+# Rich colored output → stderr, JSON log files → logs/ directory.
+# log_level: "INFO"             # DEBUG, INFO, WARNING, ERROR, CRITICAL
+# log_dir: "logs"               # Directory for rotating JSON log files
+# log_file: "scraper.log"       # Log file name (inside log_dir)
 
 # -----------------------------------------------------------------------------
 # URL Replacement (optional)

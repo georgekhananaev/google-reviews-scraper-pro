@@ -21,7 +21,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from tqdm import tqdm
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
 
 from modules.models import RawReview
 from modules.pipeline import PostScrapeRunner
@@ -1360,7 +1360,15 @@ class GoogleReviewsScraper:
                 log.warning("Could not find reviews pane with any selector. Page structure might have changed.")
                 return False
 
-            pbar = tqdm(desc="Scraped", ncols=80, initial=len(seen))
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                transient=False,
+            )
+            progress.start()
+            task_id = progress.add_task("Scraped", total=None, completed=len(seen))
             idle = 0
             processed_ids = set()
             consecutive_matched_batches = 0
@@ -1467,7 +1475,7 @@ class GoogleReviewsScraper:
                         if result == "unchanged":
                             batch_unchanged += 1
                         seen.add(raw.id)
-                        pbar.update(1)
+                        progress.advance(task_id)
                         idle = 0
                         attempts = 0
 
@@ -1565,7 +1573,7 @@ class GoogleReviewsScraper:
                     attempts += 1
                     time.sleep(1)
 
-            pbar.close()
+            progress.stop()
 
             # End session with stats
             total_found = sum(batch_stats.values())

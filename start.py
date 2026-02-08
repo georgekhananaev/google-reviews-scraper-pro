@@ -8,6 +8,7 @@ Main entry point supporting scrape + management commands.
 
 import json
 import sys
+from pathlib import Path
 
 from modules.cli import parse_arguments
 from modules.config import load_config
@@ -420,10 +421,76 @@ def _run_prune_audit(config, args):
         db.close()
 
 
+def _run_logs(config, args):
+    """Run the logs viewer command."""
+    import sys
+    log_dir = config.get("log_dir", "logs")
+    log_file = config.get("log_file", "scraper.log")
+    log_path = Path(log_dir) / log_file
+
+    if not log_path.exists():
+        print(f"Log file not found: {log_path}")
+        sys.exit(1)
+
+    lines = getattr(args, "lines", 50)
+    level_filter = (getattr(args, "level", None) or "").upper()
+    follow = getattr(args, "follow", False)
+
+    def _print_lines(path, n, level):
+        with open(path, "r", encoding="utf-8") as f:
+            all_lines = f.readlines()
+        tail = all_lines[-n:] if n < len(all_lines) else all_lines
+        for line in tail:
+            line = line.rstrip()
+            if not line:
+                continue
+            if level:
+                try:
+                    entry = json.loads(line)
+                    if entry.get("level", "") != level:
+                        continue
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            print(line)
+
+    _print_lines(log_path, lines, level_filter)
+
+    if follow:
+        import time
+        with open(log_path, "r", encoding="utf-8") as f:
+            f.seek(0, 2)  # seek to end
+            try:
+                while True:
+                    line = f.readline()
+                    if not line:
+                        time.sleep(0.3)
+                        continue
+                    line = line.rstrip()
+                    if level_filter:
+                        try:
+                            entry = json.loads(line)
+                            if entry.get("level", "") != level_filter:
+                                continue
+                        except (json.JSONDecodeError, KeyError):
+                            pass
+                    print(line)
+            except KeyboardInterrupt:
+                pass
+
+
 def main():
     """Main function to initialize and run the scraper or management commands."""
     args = parse_arguments()
     config = load_config(args.config)
+
+    # Setup structured logging (skip for 'logs' viewer — it reads raw files)
+    if args.command != "logs":
+        from modules.log_manager import setup_logging
+        setup_logging(
+            level=config.get("log_level", "INFO"),
+            log_dir=config.get("log_dir", "logs"),
+            log_file=config.get("log_file", "scraper.log"),
+        )
 
     commands = {
         "scrape": _run_scrape,
@@ -441,6 +508,7 @@ def main():
         "api-key-stats": _run_api_key_stats,
         "audit-log": _run_audit_log,
         "prune-audit": _run_prune_audit,
+        "logs": _run_logs,
     }
 
     handler = commands.get(args.command)

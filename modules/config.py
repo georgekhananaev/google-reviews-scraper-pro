@@ -10,9 +10,6 @@ from typing import Dict, Any
 
 import yaml
 
-# Configure logging - can be overridden by environment variable
-log_level = getattr(logging, os.environ.get('LOG_LEVEL', 'INFO').upper(), logging.INFO)
-logging.basicConfig(level=log_level, format="[%(asctime)s] %(levelname)s: %(message)s")
 log = logging.getLogger("scraper")
 
 # Default configuration path
@@ -56,8 +53,15 @@ DEFAULT_CONFIG = {
         "source": "Google Maps"  # Default example
     },
     "s3": {
+        "provider": "aws",
+        "endpoint_url": None,
+        "path_style": False,
+        "acl": "public-read",
         "sync_mode": "update",
     },
+    "log_level": "INFO",
+    "log_dir": "logs",
+    "log_file": "scraper.log",
     "db_path": "reviews.db",
     "stop_threshold": 3,
 }

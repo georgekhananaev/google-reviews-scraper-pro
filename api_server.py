@@ -48,11 +48,6 @@ async def require_api_key(request: Request, key: Optional[str] = Security(_api_k
     request.state.api_key_info = None
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 log = logging.getLogger("api_server")
 
 # Global job manager instance
@@ -64,7 +59,13 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown"""
     global job_manager
 
-    # Startup
+    # Startup — structured logging
+    from modules.log_manager import setup_logging
+    setup_logging(
+        level=_config.get("log_level", "INFO"),
+        log_dir=_config.get("log_dir", "logs"),
+        log_file=_config.get("log_file", "scraper.log"),
+    )
     log.info("Starting Google Reviews Scraper API Server")
     job_manager = JobManager(max_concurrent_jobs=3)
 

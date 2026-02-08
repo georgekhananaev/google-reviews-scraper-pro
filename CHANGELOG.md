@@ -5,6 +5,15 @@ All notable changes to Google Reviews Scraper Pro.
 ## [Unreleased]
 
 ### Added
+- **Unified S3 provider config** — `s3.provider` key with presets for `"aws"` (default), `"minio"` (auto-sets `path_style: true`, `acl: ""`), and `"r2"` (auto-sets `region_name: "auto"`, `acl: ""`). Explicit config always overrides preset defaults.
+- **S3 endpoint_url support** — `s3.endpoint_url` param for connecting to MinIO, R2, or any S3-compatible storage. URL generation adapts automatically.
+- **S3 path-style addressing** — `s3.path_style` option enables path-style S3 requests (required by MinIO).
+- **Configurable S3 ACL** — `s3.acl` setting (default `"public-read"`). Set to empty string to skip ACL entirely (required by R2).
+- **Structured logging** — Rich colored console output to stderr + rotating JSON log files in `logs/` directory. Configurable via `log_level`, `log_dir`, `log_file` in config.
+- **`logs` CLI command** — `python start.py logs [--lines N] [--level LEVEL] [--follow]` to view and tail structured log files.
+- **`modules/log_manager.py`** — centralized `setup_logging()` with `RichHandler` (stderr), `RotatingFileHandler` (JSON lines, 5MB rotation, 5 backups), and noisy logger suppression.
+- 24 new tests — `test_s3_providers.py` (17 tests: preset resolution, URL generation, ACL handling, client init) and `test_log_manager.py` (8 tests: handler setup, JSON format, level filtering).
+- `rich>=13.7.0` added to `requirements.txt`.
 - **SQLite-based API key management** — `ApiKeyDB` class in `modules/api_keys.py` stores SHA-256 hashed keys with create, verify, revoke, list, and stats operations. Replaces env var / config-based single key.
 - **API audit logging** — every API request logged to `api_audit_log` table with key ID, endpoint, method, client IP, status code, and response time. `AuditMiddleware` in `api_server.py`.
 - **6 new CLI commands** — `api-key-create`, `api-key-list`, `api-key-revoke`, `api-key-stats`, `audit-log`, `prune-audit`.
@@ -19,6 +28,8 @@ All notable changes to Google Reviews Scraper Pro.
 - ReviewDB initialized in API server lifespan for read-only queries (safe with WAL mode).
 
 ### Changed
+- Replaced `tqdm` progress bar with `rich.progress.Progress` in scraper scroll loop.
+- Removed `logging.basicConfig()` from `config.py` and `api_server.py` — logging now initialized via `setup_logging()` in both entrypoints (`start.py`, `api_server.py`).
 - API authentication switched from single `API_KEY` env var to SQLite-managed keys. Open access when no keys exist; auth enforced when at least one active DB key exists.
 - Removed `api_key` from config files (`config.sample.yaml`, `config.yaml`). CORS `allowed_origins` remains.
 - Removed legacy `stop_on_match` and `overwrite_existing` fields from `ScrapeRequest` model (replaced by `scrape_mode`).

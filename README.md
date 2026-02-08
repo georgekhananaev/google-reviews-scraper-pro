@@ -14,7 +14,7 @@
 - **SQLite Fortress**: Primary storage with full audit history, change detection, and per-place isolation. Your data ain't going anywhere.
 - **MongoDB Sync**: Incremental sync — only changed reviews are pushed, unchanged reviews are skipped. Because why waste bandwidth?
 - **S3-Compatible Cloud Storage**: Auto-upload images to AWS S3, Cloudflare R2, MinIO, or any S3-compatible bucket with per-business folder structure. Cloud-native, baby!
-- **CLI Toolkit**: Export, import, hide/restore reviews, prune history, view stats — all from the command line like a true hacker
+- **CLI Toolkit**: Export, import, hide/restore reviews, prune history, view stats, tail logs — all from the command line like a true hacker
 - **Enhanced SeleniumBase UC Mode**: Superior anti-detection with automatic Chrome/ChromeDriver version matching — no more version headaches!
 - **Polyglot Powerhouse**: Devours reviews in a smorgasbord of languages — English, Hebrew, Thai, German, you name it! 25+ languages!
 - **Aggressive Image Capture**: Multi-threaded downloading that would make NASA jealous. Snags EVERY damn photo from reviews and profiles, organized per-business.
@@ -23,7 +23,7 @@
 - **Audit History**: Every change logged with old/new values, timestamps, and session IDs. We don't miss a thing.
 - **Time-Bending Magic**: Transforms Google's vague "2 weeks ago" garbage into precise ISO timestamps
 - **Battle-Hardened Resilience**: Network hiccups? Google's tricks? HAH! We eat those for breakfast
-- **Obsessive Logging**: Every action documented in glorious detail for when things get weird
+- **Structured Logging**: Rich colored CLI output + rotating JSON log files in `logs/`. Filter and follow logs via `python start.py logs`
 
 ## Battle Station Requirements
 
@@ -157,14 +157,20 @@ See `config.sample.yaml` for all available settings and `config.businesses.sampl
 | | `mongodb.collection` | `"google_reviews"` | Collection name |
 | | `mongodb.tls_allow_invalid_certs` | `false` | Allow self-signed TLS certificates |
 | **S3-Compatible** | `use_s3` | `false` | Enable S3-compatible upload (AWS S3, R2, MinIO, etc.) |
+| | `s3.provider` | `"aws"` | Provider preset: `aws`, `minio`, or `r2` (applies sensible defaults) |
 | | `s3.bucket_name` | `""` | Bucket name |
 | | `s3.prefix` | `"google_reviews/"` | Key prefix (stored as `{prefix}/{place_id}/`) |
 | | `s3.region_name` | `"us-east-1"` | Region (or `"auto"` for R2) |
-| | `s3.endpoint_url` | `""` | Custom endpoint for R2/MinIO (leave empty for AWS) |
+| | `s3.endpoint_url` | `null` | Custom endpoint for R2/MinIO (leave empty for AWS) |
+| | `s3.path_style` | `false` | Path-style addressing (MinIO requires `true`) |
+| | `s3.acl` | `"public-read"` | ACL for uploads (empty string = skip ACL entirely) |
 | | `s3.delete_local_after_upload` | `false` | Remove local files after upload |
 | **URL Replacement** | `replace_urls` | `false` | Replace Google URLs with custom CDN URLs |
 | | `custom_url_base` | `""` | Base URL for replacements |
 | | `preserve_original_urls` | `true` | Keep originals in `original_*` fields |
+| **Logging** | `log_level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| | `log_dir` | `"logs"` | Directory for rotating JSON log files |
+| | `log_file` | `"scraper.log"` | Log file name (inside `log_dir`) |
 | **JSON** | `backup_to_json` | `true` | Export JSON snapshot after each scrape |
 | | `json_path` | `"google_reviews.json"` | Output file path |
 
@@ -234,6 +240,19 @@ python start.py hide REVIEW_ID PLACE_ID
 
 # Restore a soft-deleted review
 python start.py restore REVIEW_ID PLACE_ID
+```
+
+### Logs
+
+```bash
+# View last 50 log entries (structured JSON)
+python start.py logs
+
+# Show last 100 entries, filter by level
+python start.py logs --lines 100 --level ERROR
+
+# Follow log output in real-time (like tail -f)
+python start.py logs --follow
 ```
 
 ### History & Sync
@@ -433,6 +452,20 @@ your-bucket/
 │   │   └── reviews/
 ```
 
+### Log Files
+
+Structured JSON logs with automatic rotation:
+
+```
+logs/
+├── scraper.log              # Current log file (JSON lines)
+├── scraper.log.1            # Rotated (5MB max, 5 backups)
+├── scraper.log.2
+└── ...
+```
+
+View with: `python start.py logs --lines 50 --level ERROR --follow`
+
 ### JSON Backup
 
 Full snapshot exported after each scrape: `google_reviews.json`
@@ -525,6 +558,7 @@ Works with any S3-compatible storage. Pick your poison:
 ```yaml
 use_s3: true
 s3:
+  provider: "aws"                # Optional — "aws" is the default
   aws_access_key_id: "YOUR_KEY"
   aws_secret_access_key: "YOUR_SECRET"
   region_name: "us-east-1"
@@ -538,11 +572,12 @@ s3:
 ```yaml
 use_s3: true
 s3:
+  provider: "r2"                 # Sets region_name: "auto", acl: "" automatically
   aws_access_key_id: "YOUR_R2_ACCESS_KEY"
   aws_secret_access_key: "YOUR_R2_SECRET_KEY"
-  region_name: "auto"
   bucket_name: "your-r2-bucket"
   endpoint_url: "https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com"
+  s3_base_url: "https://pub-HASH.r2.dev"  # Public R2 bucket URL
   prefix: "google_reviews/"
 ```
 
@@ -551,9 +586,9 @@ s3:
 ```yaml
 use_s3: true
 s3:
+  provider: "minio"              # Sets path_style: true, acl: "" automatically
   aws_access_key_id: "minioadmin"
   aws_secret_access_key: "minioadmin"
-  region_name: "us-east-1"
   bucket_name: "reviews"
   endpoint_url: "http://localhost:9000"
   prefix: "google_reviews/"
