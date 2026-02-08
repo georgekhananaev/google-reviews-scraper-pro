@@ -9,11 +9,10 @@ All notable changes to Google Reviews Scraper Pro.
 - **API audit logging** — every API request logged to `api_audit_log` table with key ID, endpoint, method, client IP, status code, and response time. `AuditMiddleware` in `api_server.py`.
 - **6 new CLI commands** — `api-key-create`, `api-key-list`, `api-key-revoke`, `api-key-stats`, `audit-log`, `prune-audit`.
 - **ScrapeRequest API fields** — `scrape_mode`, `stop_threshold`, `max_reviews`, `max_scroll_attempts`, `scroll_idle_limit` added to the `/scrape` endpoint.
-- **API endpoint restructure** — all endpoints organized into 6 tagged `APIRouter` groups (System, Jobs, Places, Reviews, API Keys, Audit Log) for cleaner Swagger docs.
+- **API endpoint restructure** — all endpoints organized into 5 tagged `APIRouter` groups (System, Jobs, Places, Reviews, Audit Log) for cleaner Swagger docs.
 - **Places endpoints** — `GET /places` (list all) and `GET /places/{place_id}` (get details) to query registered places from SQLite.
 - **Reviews endpoints** — `GET /reviews/{place_id}` (paginated list with `limit`/`offset`/`include_deleted`), `GET /reviews/{place_id}/{review_id}` (single review), `GET /reviews/{place_id}/{review_id}/history` (change history with deserialized `changed_fields`).
-- **API key management via REST** — `POST /api-keys` (create), `GET /api-keys` (list), `DELETE /api-keys/{key_id}` (revoke), `GET /api-keys/{key_id}/stats` (usage stats + recent requests).
-- **Audit log endpoint** — `GET /audit-log` with `key_id`, `limit`, and `since` query filters.
+- **Audit log endpoint** — `GET /audit-log` with `key_id`, `limit`, and `since` query filters. API key management remains CLI-only for security.
 - **Database stats endpoint** — `GET /db-stats` returns full ReviewDB statistics (places, reviews, sessions, history counts, db size, per-place breakdown). Replaces `GET /stats` which only returned job manager stats.
 - **ReviewDB.count_reviews()** method for pagination totals.
 - **Dependency injection** — `get_review_db()` and `get_api_key_db()` helpers for cleaner endpoint signatures.

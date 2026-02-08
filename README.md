@@ -272,7 +272,7 @@ python api_server.py
 # Interactive docs: http://localhost:8000/docs
 ```
 
-Endpoints are organized into 6 tagged groups (visible in `/docs`):
+Endpoints are organized into 5 tagged groups (visible in `/docs`):
 
 ### System
 
@@ -333,27 +333,6 @@ curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/reviews/{place_id}
 
 # Get review change history
 curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/reviews/{place_id}/{review_id}/history"
-```
-
-### API Keys
-
-Manage API keys via REST (in addition to CLI commands):
-
-```bash
-# Create a new API key
-curl -X POST "http://localhost:8000/api-keys" \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: grs_your_key_here" \
-  -d '{"name": "production-frontend"}'
-
-# List all keys
-curl -H "X-API-Key: grs_your_key_here" http://localhost:8000/api-keys
-
-# Revoke a key
-curl -X DELETE -H "X-API-Key: grs_your_key_here" "http://localhost:8000/api-keys/{key_id}"
-
-# Key stats with recent requests
-curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/api-keys/{key_id}/stats"
 ```
 
 ### Audit Log

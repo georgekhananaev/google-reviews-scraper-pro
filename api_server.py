@@ -280,39 +280,6 @@ class ReviewHistoryEntry(BaseModel):
     timestamp: str
 
 
-# --- API Keys ---
-class ApiKeyCreateRequest(BaseModel):
-    name: str = Field(..., description="Descriptive name for the API key")
-
-
-class ApiKeyCreateResponse(BaseModel):
-    id: int
-    name: str
-    raw_key: str
-    message: str = "Store this key securely — it cannot be retrieved again"
-
-
-class ApiKeyResponse(BaseModel):
-    id: int
-    name: str
-    key_prefix: str
-    created_at: str
-    last_used_at: Optional[str] = None
-    usage_count: int = 0
-    is_active: int = 1
-
-
-class ApiKeyStatsResponse(BaseModel):
-    id: int
-    name: str
-    key_prefix: str
-    created_at: str
-    last_used_at: Optional[str] = None
-    usage_count: int = 0
-    is_active: int = 1
-    recent_requests: List[Dict[str, Any]] = []
-
-
 # --- Audit ---
 class AuditLogEntry(BaseModel):
     id: int
@@ -621,45 +588,6 @@ async def get_review_history(place_id: str, review_id: str,
     return entries
 
 
-# --- API Keys Router ---
-api_keys_router = APIRouter(tags=["API Keys"], dependencies=[Depends(require_api_key)])
-
-
-@api_keys_router.post("/api-keys", response_model=ApiKeyCreateResponse,
-                       summary="Create API Key")
-async def create_api_key(body: ApiKeyCreateRequest, api_key_db=Depends(get_api_key_db)):
-    """Create a new API key. The raw key is returned only once."""
-    key_id, raw_key = api_key_db.create_key(body.name)
-    return ApiKeyCreateResponse(id=key_id, name=body.name, raw_key=raw_key)
-
-
-@api_keys_router.get("/api-keys", response_model=List[ApiKeyResponse],
-                      summary="List API Keys")
-async def list_api_keys(api_key_db=Depends(get_api_key_db)):
-    """List all API keys (hashes are never exposed)."""
-    keys = api_key_db.list_keys()
-    return [ApiKeyResponse(**k) for k in keys]
-
-
-@api_keys_router.delete("/api-keys/{key_id}", summary="Revoke API Key")
-async def revoke_api_key(key_id: int, api_key_db=Depends(get_api_key_db)):
-    """Revoke an API key (immediate, cannot be undone)."""
-    revoked = api_key_db.revoke_key(key_id)
-    if not revoked:
-        raise HTTPException(status_code=404, detail="Key not found or already revoked")
-    return {"message": "API key revoked successfully"}
-
-
-@api_keys_router.get("/api-keys/{key_id}/stats", response_model=ApiKeyStatsResponse,
-                      summary="API Key Stats")
-async def get_api_key_stats(key_id: int, api_key_db=Depends(get_api_key_db)):
-    """Get detailed stats and recent requests for an API key."""
-    stats = api_key_db.get_key_stats(key_id)
-    if not stats:
-        raise HTTPException(status_code=404, detail="Key not found")
-    return ApiKeyStatsResponse(**stats)
-
-
 # --- Audit Log Router ---
 audit_router = APIRouter(tags=["Audit Log"], dependencies=[Depends(require_api_key)])
 
@@ -684,7 +612,6 @@ app.include_router(system_router)
 app.include_router(jobs_router)
 app.include_router(places_router)
 app.include_router(reviews_router)
-app.include_router(api_keys_router)
 app.include_router(audit_router)
 
 
