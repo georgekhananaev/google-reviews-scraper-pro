@@ -126,11 +126,9 @@ def parse_relative_date(date_str: str, lang: str, now: Optional[datetime] = None
       - now (Optional[datetime]): reference datetime; if None, current local time is used.
 
     Returns:
-      A string representing the calculated absolute datetime in ISO 8601 format.
-      If parsing fails in all supported languages, returns a random date within the last year.
+      A string representing the calculated absolute datetime in ISO 8601 format,
+      or an empty string if parsing fails.
     """
-    import random
-
     if now is None:
         now = datetime.utcnow()  # use UTC for consistency
 
@@ -147,11 +145,9 @@ def parse_relative_date(date_str: str, lang: str, now: Optional[datetime] = None
             if result != date_str:
                 return result
 
-    # If all parsing attempts failed, generate a random date within the last year
-    # This creates a date between 1 day ago and 365 days ago
-    random_days_ago = random.randint(1, 365)
-    random_date = now - timedelta(days=random_days_ago)
-    return random_date.isoformat()
+    # If all parsing attempts failed, return empty string and log warning
+    log.warning("Could not parse date string: '%s' (lang=%s)", date_str, lang)
+    return ""
 
 
 def try_parse_date(date_str: str, lang: str, now: datetime) -> str:

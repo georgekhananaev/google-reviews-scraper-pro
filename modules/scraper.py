@@ -7,6 +7,7 @@ import logging
 import os
 import platform
 import re
+import threading
 import time
 import traceback
 from typing import Dict, Any, List
@@ -22,7 +23,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from tqdm import tqdm
 
-from modules.data_logic import merge_review
 from modules.models import RawReview
 from modules.pipeline import PostScrapeRunner
 from modules.review_db import ReviewDB
@@ -164,10 +164,12 @@ REVIEW_WORDS = {
 class GoogleReviewsScraper:
     """Main scraper class for Google Maps reviews"""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any],
+                 cancel_event: threading.Event | None = None):
         """Initialize scraper with configuration"""
         self.config = config
         self.scrape_mode = config.get("scrape_mode", "update")
+        self.cancel_event = cancel_event or threading.Event()
         db_path = config.get("db_path", "reviews.db")
         self.review_db = ReviewDB(db_path)
 
@@ -1379,6 +1381,10 @@ class GoogleReviewsScraper:
             scroll_stuck_count = 0
 
             while attempts < max_attempts:
+                if self.cancel_event.is_set():
+                    log.info("Scrape cancelled by user request")
+                    raise InterruptedError("Scrape cancelled")
+
                 try:
                     cards = pane.find_elements(By.CSS_SELECTOR, CARD_SEL)
                     fresh_cards: List[WebElement] = []

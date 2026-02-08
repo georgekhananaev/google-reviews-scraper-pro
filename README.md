@@ -5,63 +5,65 @@
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 ![Last Update](https://img.shields.io/badge/Last%20Updated-February%202026-red)
 
-**A scraper that ACTUALLY WORKS in 2026.** While others break with every Google update, this battle-tested solution extracts every detail from Google reviews. Multi-business support, SQLite database, MongoDB sync, S3 uploads, and a full CLI toolkit — all in one package.
+**FINALLY! A scraper that ACTUALLY WORKS in 2026!** While others break with every Google update, this bad boy keeps on trucking. Say goodbye to the frustration of constantly broken scrapers and hello to a beast that rips through Google's defenses like a hot knife through butter. Multi-business support, SQLite database, MongoDB sync, S3 uploads, and a full CLI toolkit — all in one battle-tested, rock-solid package.
 
-## Features
+## Feature Artillery
 
-- **Works in 2026**: Bypasses Google's "limited view" for non-logged users via search-based navigation — no login needed
-- **Multi-Business**: Scrape multiple businesses in one run with per-business config overrides
-- **SQLite Database**: Primary storage with full audit history, change detection, and per-place isolation
-- **MongoDB Sync**: Incremental sync — only changed reviews are pushed, unchanged reviews are skipped
-- **S3 Cloud Storage**: Auto-upload images to AWS S3 with per-business folder structure
-- **CLI Management**: Export, import, hide/restore reviews, prune history, view stats — all from the command line
-- **SeleniumBase UC Mode**: Anti-detection with automatic Chrome/ChromeDriver version matching
-- **Multilingual**: Parses dates and reviews in 25+ languages
-- **Image Capture**: Multi-threaded download of all review and profile images, organized per-business
-- **REST API**: Trigger scraping jobs via HTTP endpoints with background processing
-- **Change Detection**: Tracks new, updated, restored, and unchanged reviews per scrape session
-- **Audit History**: Every change logged with old/new values, timestamps, and session IDs
+- **Bulletproof in 2026**: While the competition falls apart, we've cracked Google's latest tricks. Google locked reviews behind a "limited view" in Feb 2026? We bypassed it the same day via search-based navigation — no login needed!
+- **Multi-Business Madness**: Scrape multiple businesses in one run with per-business config overrides. One config to rule them all.
+- **SQLite Fortress**: Primary storage with full audit history, change detection, and per-place isolation. Your data ain't going anywhere.
+- **MongoDB Sync**: Incremental sync — only changed reviews are pushed, unchanged reviews are skipped. Because why waste bandwidth?
+- **S3-Compatible Cloud Storage**: Auto-upload images to AWS S3, Cloudflare R2, MinIO, or any S3-compatible bucket with per-business folder structure. Cloud-native, baby!
+- **CLI Toolkit**: Export, import, hide/restore reviews, prune history, view stats — all from the command line like a true hacker
+- **Enhanced SeleniumBase UC Mode**: Superior anti-detection with automatic Chrome/ChromeDriver version matching — no more version headaches!
+- **Polyglot Powerhouse**: Devours reviews in a smorgasbord of languages — English, Hebrew, Thai, German, you name it! 25+ languages!
+- **Aggressive Image Capture**: Multi-threaded downloading that would make NASA jealous. Snags EVERY damn photo from reviews and profiles, organized per-business.
+- **REST API Server**: Trigger scraping jobs via HTTP endpoints with background processing
+- **Change Detection on Steroids**: Tracks new, updated, restored, and unchanged reviews per scrape session
+- **Audit History**: Every change logged with old/new values, timestamps, and session IDs. We don't miss a thing.
+- **Time-Bending Magic**: Transforms Google's vague "2 weeks ago" garbage into precise ISO timestamps
+- **Battle-Hardened Resilience**: Network hiccups? Google's tricks? HAH! We eat those for breakfast
+- **Obsessive Logging**: Every action documented in glorious detail for when things get weird
 
-## Requirements
+## Battle Station Requirements
 
 ```
-Python 3.10+
-Chrome browser
+Python 3.10+ (don't even try with 3.9, seriously)
+Chrome browser (the fresher the better)
 ```
 
-Optional:
+Optional (but c'mon, live a little):
 - MongoDB (for syncing reviews to a MongoDB collection)
-- AWS S3 (for cloud image storage)
+- AWS S3 / Cloudflare R2 / MinIO / any S3-compatible storage (for cloud image storage)
+- Coffee (mandatory for watching thousands of reviews roll in)
 
-## Installation
+## Deployment Instructions
 
+1. Grab the source code:
 ```bash
 git clone https://github.com/georgekhananaev/google-reviews-scraper-pro.git
 cd google-reviews-scraper-pro
-pip install -r requirements.txt
 ```
 
-## Quick Start
+2. Arm your environment:
+```bash
+pip install -r requirements.txt
+# Pro tip: Use a virtual env unless you enjoy dependency hell
+```
 
-1. Copy the sample config:
+3. Make sure this sucker works:
 ```bash
 cp config.sample.yaml config.yaml
-```
-
-2. Edit `config.yaml` — set your business URLs:
-```yaml
-businesses:
-  - url: "https://maps.app.goo.gl/YOUR_PLACE_LINK"
-```
-
-3. Run:
-```bash
+# Edit config.yaml — set your business URLs
 python start.py
+# If reviews start flowing, you're golden. If not, check your config!
 ```
 
 The SQLite database (`reviews.db`) is created automatically on first run.
 
-## Configuration
+## Fine-Tuning Your Beast
+
+Look, this isn't some one-size-fits-all garbage. You've got full control over every aspect.
 
 ### Minimal Config
 
@@ -101,7 +103,7 @@ businesses:
 
 ### Per-Business Overrides
 
-Each business can override any global setting — different MongoDB servers, S3 buckets, or image settings per business:
+Each business can override any global setting — different MongoDB servers, S3 buckets, or image settings per business. Go nuts:
 
 ```yaml
 # Global defaults
@@ -153,10 +155,12 @@ See `config.sample.yaml` for all available settings and `config.businesses.sampl
 | | `mongodb.uri` | `"mongodb://localhost:27017"` | Connection string |
 | | `mongodb.database` | `"reviews"` | Database name |
 | | `mongodb.collection` | `"google_reviews"` | Collection name |
-| **S3** | `use_s3` | `false` | Enable S3 upload |
-| | `s3.bucket_name` | `""` | S3 bucket name |
+| | `mongodb.tls_allow_invalid_certs` | `false` | Allow self-signed TLS certificates |
+| **S3-Compatible** | `use_s3` | `false` | Enable S3-compatible upload (AWS S3, R2, MinIO, etc.) |
+| | `s3.bucket_name` | `""` | Bucket name |
 | | `s3.prefix` | `"google_reviews/"` | Key prefix (stored as `{prefix}/{place_id}/`) |
-| | `s3.region_name` | `"us-east-1"` | AWS region |
+| | `s3.region_name` | `"us-east-1"` | Region (or `"auto"` for R2) |
+| | `s3.endpoint_url` | `""` | Custom endpoint for R2/MinIO (leave empty for AWS) |
 | | `s3.delete_local_after_upload` | `false` | Remove local files after upload |
 | **URL Replacement** | `replace_urls` | `false` | Replace Google URLs with custom CDN URLs |
 | | `custom_url_base` | `""` | Base URL for replacements |
@@ -164,28 +168,30 @@ See `config.sample.yaml` for all available settings and `config.businesses.sampl
 | **JSON** | `backup_to_json` | `true` | Export JSON snapshot after each scrape |
 | | `json_path` | `"google_reviews.json"` | Output file path |
 
-## CLI Commands
+## Unleashing Hell
 
-### Scrape Reviews
+### Battle-Tested Recipes
 
 ```bash
-# Use config.yaml (default)
+# The basics — just run it
 python start.py
+# Boom. That's it. Now go grab a coffee while the magic happens.
 
 # Override URL from command line
 python start.py --url "https://maps.app.goo.gl/YOUR_URL"
 
-# Headless + newest first + stop after 5 unchanged batches
+# Stealth Mode + Fresh Stuff First (perfect for cron jobs)
 python start.py -q --sort newest --stop-threshold 5
+# They'll never see you coming.
 
-# Only insert new reviews (skip existing)
+# Only insert new reviews (skip existing — why waste CPU cycles?)
 python start.py --scrape-mode new_only -q
 
-# Force full rescan of all reviews
+# Force full rescan of all reviews (the nuclear option)
 python start.py --scrape-mode full -q
 
-# Custom parameters via CLI
-python start.py --custom-params '{"company":"My Hotel","location":"Bangkok"}'
+# Custom Tags Galore — brand these puppies however you want
+python start.py --custom-params '{"company":"Hotel California","location":"Los Angeles"}'
 ```
 
 ### Export Reviews
@@ -256,7 +262,9 @@ python start.py migrate --source mongodb
 python start.py migrate --source json --json-path reviews.json --place-url "https://maps.app.goo.gl/YOUR_URL"
 ```
 
-## API Server
+## API Server Mode
+
+Want to trigger scraping jobs via REST API? We've got you covered:
 
 ```bash
 python api_server.py
@@ -264,18 +272,58 @@ python api_server.py
 # Interactive docs: http://localhost:8000/docs
 ```
 
+### Authentication
+
+Set the `API_KEY` environment variable to enable API key authentication on all endpoints:
+
 ```bash
-# Start a scraping job
+# Enable auth (recommended for production)
+API_KEY=your-secret-key python api_server.py
+
+# Without auth (development only)
+python api_server.py
+```
+
+When `API_KEY` is set, every request must include the `X-API-Key` header:
+
+```bash
+# Start a scraping job (with auth)
 curl -X POST "http://localhost:8000/scrape" \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-secret-key" \
   -d '{"url": "https://maps.app.goo.gl/YOUR_URL", "headless": true}'
 
 # Check job status
-curl "http://localhost:8000/jobs/{job_id}"
+curl -H "X-API-Key: your-secret-key" "http://localhost:8000/jobs/{job_id}"
 
 # List all jobs
-curl "http://localhost:8000/jobs"
+curl -H "X-API-Key: your-secret-key" "http://localhost:8000/jobs"
+
+# Cancel a running job (actually stops the scraper)
+curl -X POST -H "X-API-Key: your-secret-key" "http://localhost:8000/jobs/{job_id}/cancel"
+
+# Delete a completed/failed/cancelled job
+curl -X DELETE -H "X-API-Key: your-secret-key" "http://localhost:8000/jobs/{job_id}"
 ```
+
+### CORS Configuration
+
+Control which origins can access the API via the `ALLOWED_ORIGINS` environment variable:
+
+```bash
+# Allow specific origins (recommended for production)
+ALLOWED_ORIGINS="https://yourdomain.com,https://admin.yourdomain.com" python api_server.py
+
+# Allow all origins (default — credentials disabled for safety)
+python api_server.py
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_KEY` | _(empty — auth disabled)_ | API key for `X-API-Key` header authentication |
+| `ALLOWED_ORIGINS` | `*` | Comma-separated list of allowed CORS origins |
 
 ## Output Structure
 
@@ -331,7 +379,9 @@ All reviews in a single collection with `place_id` field for filtering:
 db.google_reviews.find({ place_id: "0x305037cbd917b293:0" })
 ```
 
-## Review Data Format
+## The Juicy Data Payload
+
+Here's what you'll rip out of Google's clutches for each review (and yes, it's *way* more than their official API gives you):
 
 ```json
 {
@@ -342,16 +392,19 @@ db.google_reviews.find({ place_id: "0x305037cbd917b293:0" })
   "description": {
     "en": "Great place, loved the service!",
     "th": "สถานที่ยอดเยี่ยม บริการดีมาก!"
+    // Multilingual gold mine - ALL languages preserved!
   },
-  "likes": 3,
+  "likes": 3, // Yes, we even grab those useless "likes" numbers
   "user_images": [
     "https://lh5.googleusercontent.com/p/AF1QipOj..."
+    // ALL review images - not just the first one like inferior scrapers
   ],
   "author_profile_url": "https://www.google.com/maps/contrib/112419...",
   "profile_picture": "https://lh3.googleusercontent.com/a-/ALV-UjX...",
   "owner_responses": {
     "en": {
       "text": "Thank you for your kind words!"
+      // Yes, even those canned replies from the business owner
     }
   },
   "review_date": "2025-04-15T08:15:22+00:00",
@@ -359,35 +412,49 @@ db.google_reviews.find({ place_id: "0x305037cbd917b293:0" })
   "last_modified_date": "2025-04-22T14:30:45+00:00",
   "company": "Your Business Name",
   "source": "Google Maps"
+  // Add whatever other fields you want - this baby is extensible
 }
 ```
 
-## Troubleshooting
+## When Shit Hits The Fan
 
-**Chrome/Driver issues**
-- SeleniumBase handles version matching automatically
-- Update Chrome: `chrome://settings/help`
-- Update SeleniumBase: `pip install --upgrade seleniumbase`
+### DEFCON Scenarios & Quick Fixes
 
-**"Where are my reviews?"**
-- Google shows a "limited view" to non-logged users (Feb 2026). The scraper bypasses this automatically via search-based navigation.
-- Copy URL directly from Google Maps address bar
-- Try `--sort relevance` if other sort options return no results
+1. **Chrome/Driver Having a Lovers' Quarrel**
+   - **Good news!** SeleniumBase handles Chrome/ChromeDriver version matching automatically
+   - Update Chrome browser: Go to chrome://settings/help
+   - SeleniumBase will automatically download the matching ChromeDriver — no manual intervention needed!
+   - If issues persist: `pip install --upgrade seleniumbase`
 
-**MongoDB connection issues**
-- Check connection string and credentials
-- Verify the server is reachable: `nc -zv your-host 27017`
-- For Docker: `docker run -d --name mongodb -p 27017:27017 mongo:latest`
+2. **MongoDB Throwing a Tantrum**
+   - Double-check your connection string — typos are the #1 culprit
+   - Is your IP whitelisted? MongoDB Atlas loves to block new IPs
+   - Run `nc -zv your-mongodb-host 27017` to check if the port's even reachable
+   - Did you forget to start Mongo? `sudo systemctl start mongod` (Linux) or `brew services start mongodb-community` (Mac)
+   - **SSL/TLS errors?** If using self-signed certs or local MongoDB, set `mongodb.tls_allow_invalid_certs: true` in your `config.yaml`
 
-**Image download failures**
-- Google may throttle after heavy usage
-- Check file permissions on the `review_images/` directory
+3. **"Where Are My Reviews?!" Crisis**
+   - **Google "Limited View" (Feb 2026):** Google now shows a "limited view" to non-logged users on direct place URLs. Our scraper handles this automatically via search-based navigation — just make sure you're on the latest version!
+   - Make sure your URL isn't garbage — copy directly from the address bar in Google Maps
+   - Not all sort options work for all businesses. Try `--sort relevance` if all else fails
+   - Some locations have zero reviews. Yes, it happens. No, it's not the scraper's fault.
 
-## AWS S3 Setup
+4. **Image Download Apocalypse**
+   - Check if Google is throttling you (likely if you've been hammering them)
+   - Check file permissions on the `review_images/` directory
+   - Some images vanish from Google's CDN faster than your ex. Nothing we can do about that.
 
-1. Create an S3 bucket with public read access (if images should be publicly accessible)
-2. Create an IAM user with `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` permissions
-3. Configure in `config.yaml`:
+5. **S3/R2/MinIO Upload Chaos**
+   - Double-check your credentials and bucket permissions
+   - For R2/MinIO: make sure `endpoint_url` is set correctly
+   - Make sure your bucket exists and is in the specified region
+   - Check if your bucket policy allows public-read for uploaded objects
+
+## Cloud Storage Setup (S3 / R2 / MinIO)
+
+Works with any S3-compatible storage. Pick your poison:
+
+### AWS S3
 
 ```yaml
 use_s3: true
@@ -400,7 +467,45 @@ s3:
   delete_local_after_upload: false
 ```
 
+### Cloudflare R2
+
+```yaml
+use_s3: true
+s3:
+  aws_access_key_id: "YOUR_R2_ACCESS_KEY"
+  aws_secret_access_key: "YOUR_R2_SECRET_KEY"
+  region_name: "auto"
+  bucket_name: "your-r2-bucket"
+  endpoint_url: "https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com"
+  prefix: "google_reviews/"
+```
+
+### MinIO (Self-Hosted)
+
+```yaml
+use_s3: true
+s3:
+  aws_access_key_id: "minioadmin"
+  aws_secret_access_key: "minioadmin"
+  region_name: "us-east-1"
+  bucket_name: "reviews"
+  endpoint_url: "http://localhost:9000"
+  prefix: "google_reviews/"
+```
+
+### Any S3-Compatible Provider
+
+DigitalOcean Spaces, Backblaze B2, Wasabi, etc. — just set `endpoint_url` and credentials. If it speaks S3, we speak to it.
+
 Images are organized per-business: `{prefix}/{place_id}/profiles/` and `{prefix}/{place_id}/reviews/`
+
+### Pro Tips:
+
+- **Cost Optimization**: Enable S3 Intelligent Tiering (AWS) or use R2 for zero egress fees
+- **CDN**: Add CloudFront (AWS) or use R2's built-in CDN for faster global delivery
+- **Self-Hosted**: MinIO gives you full control — run it on a Raspberry Pi if you're feeling adventurous
+- **Security**: Use IAM roles instead of hardcoded keys in production
+- **Monitoring**: Enable access logging to track usage
 
 ## Running Tests
 
@@ -416,6 +521,43 @@ python -m pytest tests/ -v -k "not s3 and not mongodb and not seleniumbase"
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
+## FAQs From The Trenches
+
+**Q: Is scraping Google Maps reviews legal?**
+A: Look, I'm not your lawyer. Google doesn't want you to do it. It violates their ToS. It's your business whether that scares you or not. This tool exists for "research purposes" (wink wink). Use at your own risk, hotshot.
+
+**Q: Will this still work tomorrow/next week/when Google changes stuff?**
+A: Unlike 99% of the GitHub garbage that breaks when Google changes a CSS class, we're battle-hardened veterans of Google's interface wars. We update this beast CONSTANTLY. Google locked reviews behind a "limited view" in Feb 2026? We bypassed it the same day. This thing adapts faster than Google can change.
+
+**Q: How do I avoid Google's ban hammer?**
+A: Our undetected-chromedriver does the heavy lifting, but:
+- Don't be stupid greedy — set reasonable delays
+- Spread requests across IPs if you're going enterprise-level
+- Rotate user agents if you're truly paranoid
+- Consider a proxy rotation service (worth every penny)
+
+**Q: Can this handle enterprise-level scraping (10k+ reviews)?**
+A: Damn straight. We've pulled 50k+ reviews without breaking a sweat. The SQLite + MongoDB combo isn't just for show — it's made for serious volume. Just make sure your machine has the RAM to handle it.
+
+**Q: I found a bug/have a killer feature idea!**
+A: Jump on GitHub and file an issue or PR. But do your homework first — if you're reporting something already in the README, we'll roast you publicly.
+
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for a full history of releases.
+See [CHANGELOG.md](CHANGELOG.md) for a full history of releases and what changed.
+
+## Links
+
+- [Python Documentation](https://docs.python.org/3/)
+- [Selenium Documentation](https://selenium-python.readthedocs.io/)
+- [MongoDB Documentation](https://docs.mongodb.com/)
+- [AWS S3 Documentation](https://docs.aws.amazon.com/s3/)
+- [Cloudflare R2 Documentation](https://developers.cloudflare.com/r2/)
+- [MinIO Documentation](https://min.io/docs/minio/linux/index.html)
+- [Boto3 Documentation](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html)
+
+---
+
+## SEO Keywords
+
+Google Maps reviews scraper, Google reviews scraper 2026, Google reviews exporter, review analysis tool, business review tool, Python web scraper, scrape Google reviews Python, MongoDB review database, SQLite review database, multilingual review scraper, Google Maps data extraction, business intelligence tool, customer feedback analysis, review data mining, Google business reviews, local SEO analysis, review image downloader, Python Selenium scraper, SeleniumBase undetected chromedriver, automated review collection, Google Maps API alternative, review monitoring tool, scrape Google reviews, Google business ratings, multi-business review scraper, Google reviews to JSON, Google reviews to CSV, Google reviews MongoDB sync, Cloudflare R2 image storage, MinIO image upload, S3 compatible storage reviews, AWS S3 review images, Google Maps review bypass, Google limited view bypass, review change detection, review audit history, headless Chrome scraper, REST API scraper, bulk Google reviews download, Google reviews backup tool, review scraping automation, Google Maps scraper no login

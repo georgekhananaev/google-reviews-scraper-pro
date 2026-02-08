@@ -5,7 +5,7 @@ Data storage modules for Google Maps Reviews Scraper.
 import copy
 import json
 import logging
-import ssl
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Set
@@ -16,13 +16,8 @@ from modules.date_converter import DateConverter
 from modules.image_handler import ImageHandler
 from modules.data_logic import merge_review, merge_review_with_translation
 
-# Configure SSL for MongoDB connection
-ssl._create_default_https_context = ssl._create_unverified_context  # macOS SSL fix
-
 # Logger
 log = logging.getLogger("scraper")
-
-RAW_LANG = "en"
 
 
 class MongoDBStorage:
@@ -34,6 +29,7 @@ class MongoDBStorage:
         self.uri = mongodb_config.get("uri")
         self.db_name = mongodb_config.get("database")
         self.collection_name = mongodb_config.get("collection")
+        self.tls_allow_invalid_certs = mongodb_config.get("tls_allow_invalid_certs", False)
         self.client = None
         self.collection = None
         self.connected = False
@@ -48,14 +44,13 @@ class MongoDBStorage:
     def connect(self) -> bool:
         """Connect to MongoDB"""
         try:
-            # Use the correct TLS parameters for newer PyMongo versions
             self.client = pymongo.MongoClient(
                 self.uri,
-                tlsAllowInvalidCertificates=True,  # Equivalent to ssl_cert_reqs=CERT_NONE
+                tlsAllowInvalidCertificates=self.tls_allow_invalid_certs,
                 connectTimeoutMS=30000,
                 socketTimeoutMS=None,
                 connect=True,
-                maxPoolSize=50
+                maxPoolSize=50,
             )
             # Test connection
             self.client.admin.command('ping')
@@ -94,18 +89,18 @@ class MongoDBStorage:
             return {}
 
     def fetch_existing_ids(self) -> Set[str]:
-        """Fetch existing review IDs from MongoDB (lightweight projection)."""
+        """Fetch existing review IDs from MongoDB (lightweight projection).
+
+        Raises on connection/query failure so callers can distinguish
+        "empty collection" from "database unreachable".
+        """
         if not self.connected and not self.connect():
-            return set()
-        try:
-            return {
-                doc["review_id"]
-                for doc in self.collection.find({}, {"review_id": 1, "_id": 0})
-                if "review_id" in doc
-            }
-        except Exception as e:
-            log.error(f"Error fetching review IDs from MongoDB: {e}")
-            return set()
+            raise ConnectionError("MongoDB connection failed")
+        return {
+            doc["review_id"]
+            for doc in self.collection.find({}, {"review_id": 1, "_id": 0})
+            if "review_id" in doc
+        }
 
     def save_reviews(self, reviews: Dict[str, Dict[str, Any]], sync_mode: str = "update"):
         """Save reviews to MongoDB using bulk operations.
@@ -126,8 +121,8 @@ class MongoDBStorage:
             return
 
         try:
-            # Process reviews before saving
-            processed_reviews = reviews.copy()
+            # Deep copy to avoid mutating caller's data
+            processed_reviews = copy.deepcopy(reviews)
 
             # Convert string dates to datetime objects if enabled
             if self.convert_dates:
@@ -268,13 +263,19 @@ class JSONStorage:
             # Index by review_id for fast lookups
             return {d.get("review_id", ""): d for d in data if d.get("review_id")}
         except json.JSONDecodeError:
-            log.warning("⚠️ Error reading JSON file, starting with empty data")
+            backup = self.json_path.with_suffix(
+                f".corrupt.{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            )
+            shutil.copy2(self.json_path, backup)
+            log.warning(
+                "Corrupt JSON file backed up to %s — starting with empty data", backup
+            )
             return {}
 
     def save_json_docs(self, docs: Dict[str, Dict[str, Any]]):
         """Save reviews to JSON file"""
-        # Create a copy of the docs to avoid modifying the original
-        processed_docs = {review_id: review.copy() for review_id, review in docs.items()}
+        # Deep copy to avoid mutating caller's data
+        processed_docs = copy.deepcopy(docs)
 
         # Process reviews before saving
         # Convert string dates to datetime objects if enabled

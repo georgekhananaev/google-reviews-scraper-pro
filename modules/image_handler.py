@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Dict, Any, Set, Tuple
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from modules.s3_handler import S3Handler
 
@@ -39,6 +41,16 @@ class ImageHandler:
         self._place_id = None
         self.profile_dir = self.image_dir / "profiles"
         self.review_dir = self.image_dir / "reviews"
+
+        # HTTP session with automatic retries (exponential backoff)
+        self._session = requests.Session()
+        retry = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        self._session.mount("https://", HTTPAdapter(max_retries=retry))
+        self._session.mount("http://", HTTPAdapter(max_retries=retry))
 
         # Initialize S3 handler
         self.s3_handler = S3Handler(config)
@@ -140,7 +152,7 @@ class ImageHandler:
                 custom_url = self.get_custom_url(filename, is_profile)
                 return url, download_url, filename, custom_url
 
-            response = requests.get(download_url, stream=True, timeout=10)
+            response = self._session.get(download_url, stream=True, timeout=10)
             response.raise_for_status()
 
             with open(filepath, 'wb') as f:

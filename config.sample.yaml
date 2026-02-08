@@ -58,6 +58,8 @@ mongodb:
   uri: "mongodb://localhost:27017"
   database: "reviews"
   collection: "google_reviews"
+  # Set to true if using self-signed certificates or local MongoDB without valid TLS
+  tls_allow_invalid_certs: false
   # Sync mode — controls how reviews are written to MongoDB.
   # Works independently from the scraper — always receives ALL reviews
   # from SQLite and decides what to write based on MongoDB state:

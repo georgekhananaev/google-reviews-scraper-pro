@@ -4,6 +4,31 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+### Added
+- **API key authentication** — all endpoints require `X-API-Key` header when `API_KEY` env var is set. Skipped when unset for backward compatibility.
+- **Configurable CORS** — `ALLOWED_ORIGINS` env var (comma-separated) replaces hardcoded wildcard. Credentials disabled when using wildcard origin.
+- **Cooperative job cancellation** — `cancel_job()` sets a `threading.Event` checked in the scraper scroll loop. Running scrapes exit early on cancel instead of continuing to completion.
+- **Image download retry** — `ImageHandler` uses `requests.Session` with `HTTPAdapter`/`Retry` (3 retries, exponential backoff on 429/5xx).
+- **JSON corruption backup** — corrupt JSON files are backed up with timestamp before returning empty data.
+- **Configurable MongoDB TLS** — `mongodb.tls_allow_invalid_certs` config option (default `false`) replaces hardcoded `True`.
+- `requests` and `PyYAML` added as explicit dependencies in `requirements.txt` and `pyproject.toml` (previously only available as transitive deps).
+
+### Fixed
+- **Random date fallback removed** — `parse_relative_date()` returns empty string instead of generating a random date within the last year when parsing fails.
+- **Robust date parser used in merge** — `merge_review()` now uses `raw.review_date` (from the robust `parse_date_to_iso()`) instead of re-parsing with the weak `parse_relative_date()`.
+- **Deep copy in `save_reviews()`** — `MongoDBStorage.save_reviews()` now uses `copy.deepcopy()` to avoid mutating caller data.
+- **Global SSL override removed** — `ssl._create_default_https_context = ssl._create_unverified_context` no longer poisons the entire Python process.
+- **MongoDB fetch error propagation** — `fetch_existing_ids()` raises on failure instead of silently returning empty set. Callers fail closed in `new_only` sync mode.
+- **Delete job race condition** — `delete_job()` restricted to terminal-state jobs only. Worker exception handler uses `.get()` guard to prevent `KeyError`.
+- **Job status overwrite** — worker thread never overwrites `CANCELLED` status back to `COMPLETED` or `FAILED`.
+- **`to_dict()` serialization crash** — replaced `dataclasses.asdict()` (which can't deepcopy `threading.Event`) with explicit dict construction.
+
+### Changed
+- Removed unused `RAW_LANG` constant from `data_logic.py` and `data_storage.py`.
+- Removed unused imports (`asyncio`, `time`, `ssl`, `asdict`, `merge_review` in scraper).
+- API delete endpoint returns 400 with message when trying to delete a non-terminal job.
+- README rewritten with expanded documentation, troubleshooting, S3-compatible storage guide, and FAQ.
+
 ## [1.1.1] - 2026-02-08
 
 ### Added

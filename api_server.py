@@ -6,14 +6,28 @@ Provides REST API endpoints to trigger and manage scraping jobs.
 
 import logging
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from typing import Dict, Any, List, Optional
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, HttpUrl, Field
 
 from modules.job_manager import JobManager, JobStatus, ScrapingJob
+
+# --- API Key Authentication ---
+API_KEY = os.environ.get("API_KEY", "")
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def require_api_key(key: Optional[str] = Security(_api_key_header)):
+    """Enforce API key when API_KEY env var is set. Skipped when unset."""
+    if not API_KEY:
+        return  # auth disabled — no key configured
+    if key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # Configure logging
 logging.basicConfig(
@@ -54,11 +68,14 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware
+# CORS — configurable via ALLOWED_ORIGINS env var (comma-separated).
+# Defaults to ["*"] with credentials disabled for safety.
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "*")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
+    allow_origins=_allowed_origins,
+    allow_credentials=_raw_origins != "*",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -120,7 +137,8 @@ async def root():
     }
 
 
-@app.post("/scrape", response_model=Dict[str, str], summary="Start Scraping Job")
+@app.post("/scrape", response_model=Dict[str, str], summary="Start Scraping Job",
+          dependencies=[Depends(require_api_key)])
 async def start_scrape(request: ScrapeRequest, background_tasks: BackgroundTasks):
     """
     Start a new scraping job in the background.
@@ -161,7 +179,8 @@ async def start_scrape(request: ScrapeRequest, background_tasks: BackgroundTasks
         raise HTTPException(status_code=500, detail=f"Failed to create scraping job: {str(e)}")
 
 
-@app.get("/jobs/{job_id}", response_model=JobResponse, summary="Get Job Status")
+@app.get("/jobs/{job_id}", response_model=JobResponse, summary="Get Job Status",
+         dependencies=[Depends(require_api_key)])
 async def get_job(job_id: str):
     """Get detailed information about a specific job"""
     if not job_manager:
@@ -174,7 +193,8 @@ async def get_job(job_id: str):
     return JobResponse(**job.to_dict())
 
 
-@app.get("/jobs", response_model=List[JobResponse], summary="List Jobs")
+@app.get("/jobs", response_model=List[JobResponse], summary="List Jobs",
+         dependencies=[Depends(require_api_key)])
 async def list_jobs(
     status: Optional[JobStatus] = Query(None, description="Filter by job status"),
     limit: int = Query(100, description="Maximum number of jobs to return", ge=1, le=1000)
@@ -187,7 +207,8 @@ async def list_jobs(
     return [JobResponse(**job.to_dict()) for job in jobs]
 
 
-@app.post("/jobs/{job_id}/start", summary="Start Pending Job")
+@app.post("/jobs/{job_id}/start", summary="Start Pending Job",
+          dependencies=[Depends(require_api_key)])
 async def start_job(job_id: str):
     """Start a pending job manually"""
     if not job_manager:
@@ -207,7 +228,8 @@ async def start_job(job_id: str):
     return {"message": "Job started successfully"}
 
 
-@app.post("/jobs/{job_id}/cancel", summary="Cancel Job")
+@app.post("/jobs/{job_id}/cancel", summary="Cancel Job",
+          dependencies=[Depends(require_api_key)])
 async def cancel_job(job_id: str):
     """Cancel a pending or running job"""
     if not job_manager:
@@ -223,20 +245,29 @@ async def cancel_job(job_id: str):
     return {"message": "Job cancelled successfully"}
 
 
-@app.delete("/jobs/{job_id}", summary="Delete Job")
+@app.delete("/jobs/{job_id}", summary="Delete Job",
+            dependencies=[Depends(require_api_key)])
 async def delete_job(job_id: str):
-    """Delete a job from the system"""
+    """Delete a job from the system (only terminal-state jobs)"""
     if not job_manager:
         raise HTTPException(status_code=500, detail="Job manager not initialized")
-    
+
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
     deleted = job_manager.delete_job(job_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete job in '{job.status.value}' state. Cancel it first.",
+        )
+
     return {"message": "Job deleted successfully"}
 
 
-@app.get("/stats", response_model=JobStatsResponse, summary="Get Job Statistics")
+@app.get("/stats", response_model=JobStatsResponse, summary="Get Job Statistics",
+         dependencies=[Depends(require_api_key)])
 async def get_stats():
     """Get job manager statistics"""
     if not job_manager:
@@ -246,7 +277,8 @@ async def get_stats():
     return JobStatsResponse(**stats)
 
 
-@app.post("/cleanup", summary="Manual Job Cleanup")
+@app.post("/cleanup", summary="Manual Job Cleanup",
+          dependencies=[Depends(require_api_key)])
 async def cleanup_jobs(max_age_hours: int = Query(24, description="Maximum age in hours", ge=1)):
     """Manually trigger cleanup of old completed/failed jobs"""
     if not job_manager:

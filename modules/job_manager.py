@@ -2,16 +2,14 @@
 Background job manager for Google Reviews Scraper.
 """
 
-import asyncio
 import logging
 import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
 from typing import Dict, Any, Optional, List
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
 from modules.config import load_config
 from modules.scraper import GoogleReviewsScraper
@@ -42,14 +40,24 @@ class ScrapingJob:
     reviews_count: Optional[int] = None
     images_count: Optional[int] = None
     progress: Dict[str, Any] = None
+    cancel_event: threading.Event = None
+    _scraper: Optional[Any] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert job to dictionary for JSON serialization"""
-        data = asdict(self)
-        # Convert datetime objects to ISO strings
-        for field in ['created_at', 'started_at', 'completed_at']:
-            if data[field]:
-                data[field] = data[field].isoformat()
+        data = {
+            "job_id": self.job_id,
+            "status": self.status.value if isinstance(self.status, JobStatus) else self.status,
+            "url": self.url,
+            "config": self.config,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "error_message": self.error_message,
+            "reviews_count": self.reviews_count,
+            "images_count": self.images_count,
+            "progress": self.progress,
+        }
         return data
 
 
@@ -92,7 +100,8 @@ class JobManager:
             url=url,
             config=config,
             created_at=datetime.now(),
-            progress={"stage": "created", "message": "Job created and queued"}
+            progress={"stage": "created", "message": "Job created and queued"},
+            cancel_event=threading.Event(),
         )
         
         with self.lock:
@@ -146,39 +155,47 @@ class JobManager:
                 job = self.jobs[job_id]
                 job.progress = {"stage": "initializing", "message": "Setting up scraper"}
             
-            # Create scraper with job config
-            scraper = GoogleReviewsScraper(job.config)
-            
-            # Hook into scraper progress (if available)
-            # This would require modifying the scraper to report progress
-            
+            # Create scraper with job config and cancel event
+            scraper = GoogleReviewsScraper(job.config, cancel_event=job.cancel_event)
+
             with self.lock:
+                job._scraper = scraper
                 job.progress = {"stage": "scraping", "message": "Scraping reviews in progress"}
-            
+
             # Run the scraping
-            scraper.scrape()
-            
-            # Mark job as completed
+            success = scraper.scrape()
+
+            # Mark job based on scrape result — never overwrite CANCELLED
             with self.lock:
-                job.status = JobStatus.COMPLETED
-                job.completed_at = datetime.now()
-                job.progress = {"stage": "completed", "message": "Scraping completed successfully"}
-                
-                # Try to get results count if available
-                # This would require scraper to return results
+                if job.status == JobStatus.CANCELLED:
+                    log.info(f"Job {job_id} was cancelled during execution")
+                elif success:
+                    job.status = JobStatus.COMPLETED
+                    job.completed_at = datetime.now()
+                    job.progress = {"stage": "completed", "message": "Scraping completed successfully"}
+                else:
+                    job.status = JobStatus.FAILED
+                    job.completed_at = datetime.now()
+                    job.error_message = "Scraper returned failure (no reviews found or navigation error)"
+                    job.progress = {"stage": "failed", "message": "Scraping failed"}
+
                 job.reviews_count = getattr(scraper, 'total_reviews', None)
                 job.images_count = getattr(scraper, 'total_images', None)
-                
+                job._scraper = None
+
             log.info(f"Completed scraping job {job_id}")
-            
+
         except Exception as e:
             log.error(f"Error in scraping job {job_id}: {e}")
             with self.lock:
-                job = self.jobs[job_id]
-                job.status = JobStatus.FAILED
-                job.completed_at = datetime.now()
-                job.error_message = str(e)
-                job.progress = {"stage": "failed", "message": f"Job failed: {str(e)}"}
+                job = self.jobs.get(job_id)
+                if job and job.status != JobStatus.CANCELLED:
+                    job.status = JobStatus.FAILED
+                    job.completed_at = datetime.now()
+                    job.error_message = str(e)
+                    job.progress = {"stage": "failed", "message": f"Job failed: {str(e)}"}
+                if job:
+                    job._scraper = None
     
     def get_job(self, job_id: str) -> Optional[ScrapingJob]:
         """
@@ -218,43 +235,43 @@ class JobManager:
     def cancel_job(self, job_id: str) -> bool:
         """
         Cancel a pending or running job.
-        
-        Args:
-            job_id: Job ID to cancel
-            
-        Returns:
-            True if job was cancelled, False otherwise
+
+        Sets the cancel event so the scraper's scroll loop exits early.
         """
         with self.lock:
             if job_id not in self.jobs:
                 return False
-                
+
             job = self.jobs[job_id]
             if job.status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
                 return False
-                
+
             job.status = JobStatus.CANCELLED
             job.completed_at = datetime.now()
             job.progress = {"stage": "cancelled", "message": "Job was cancelled"}
-            
+
+            # Signal the scraper to stop
+            if job.cancel_event:
+                job.cancel_event.set()
+
         log.info(f"Cancelled scraping job {job_id}")
         return True
     
     def delete_job(self, job_id: str) -> bool:
         """
         Delete a job from the manager.
-        
-        Args:
-            job_id: Job ID to delete
-            
-        Returns:
-            True if job was deleted, False otherwise
+
+        Only terminal-state jobs (COMPLETED, FAILED, CANCELLED) can be deleted
+        to avoid race conditions with running worker threads.
         """
         with self.lock:
-            if job_id not in self.jobs:
+            job = self.jobs.get(job_id)
+            if not job:
+                return False
+            if job.status not in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
                 return False
             del self.jobs[job_id]
-            
+
         log.info(f"Deleted scraping job {job_id}")
         return True
     

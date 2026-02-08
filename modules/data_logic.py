@@ -8,11 +8,8 @@ own module to prevent circular imports when review_db.py needs merge logic.
 
 from typing import Dict, Any
 
-from modules.date_converter import parse_relative_date
 from modules.models import RawReview
 from modules.utils import detect_lang, get_current_iso_date
-
-RAW_LANG = "en"
 
 
 def merge_review(existing: Dict[str, Any] | None, raw: RawReview) -> Dict[str, Any]:
@@ -32,7 +29,7 @@ def merge_review(existing: Dict[str, Any] | None, raw: RawReview) -> Dict[str, A
             "profile_picture": raw.avatar,
             "owner_responses": {},
             "created_date": get_current_iso_date(),
-            "review_date": parse_relative_date(raw.date, RAW_LANG),
+            "review_date": raw.review_date or "",
         }
     else:
         # Handle existing reviews with old field names - migrate them
@@ -52,7 +49,7 @@ def merge_review(existing: Dict[str, Any] | None, raw: RawReview) -> Dict[str, A
             existing["created_date"] = get_current_iso_date()
 
         if "review_date" not in existing:
-            existing["review_date"] = parse_relative_date(raw.date, RAW_LANG)
+            existing["review_date"] = raw.review_date or ""
 
         if "date" in existing:
             del existing["date"]
