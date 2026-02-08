@@ -6,7 +6,6 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Any, Set, Tuple
-from urllib.parse import urlparse
 
 import requests
 
@@ -91,17 +90,6 @@ class ImageHandler:
         filename = url.split('/')[-1]
         return f"{filename}.jpg"
 
-        # Fallback to using the last part of the URL path
-        parsed = urlparse(url)
-        path = parsed.path
-        filename = path.split('/')[-1]
-
-        # Add .jpg extension if not present
-        if not filename.lower().endswith('.jpg'):
-            filename += ".jpg"
-
-        return filename
-
     def get_custom_url(self, filename: str, is_profile: bool = False) -> str:
         """Generate a custom URL for the image"""
         if not self.replace_urls or not filename:
@@ -144,25 +132,15 @@ class ImageHandler:
                 custom_url = self.get_custom_url(filename, is_profile)
                 return url, filename, custom_url
 
-            # Download the image
-            # For Google images, modify resolution parameters
+            # Build download URL with configured dimensions (keep original url unchanged for mapping)
+            download_url = url
             if 'googleusercontent.com' in url or 'ggpht.com' in url or 'gstatic.com' in url:
-                # Check if URL already has size parameters (=w... or =h... or =s...)
-                if '=w' in url or '=h' in url or '=s' in url:
-                    # Remove existing size parameters
-                    # Split at = to get base URL and parameters
-                    parts = url.split('=')
-                    base_url = parts[0]
-                    # Rebuild with configurable resolution parameters (using -no suffix)
-                    url = base_url + f"=w{self.max_width}-h{self.max_height}-no"
-                else:
-                    # No existing size parameters, just append them
-                    url = url + f"=w{self.max_width}-h{self.max_height}-no"
+                base_url = url.split('=')[0]
+                download_url = base_url + f"=w{self.max_width}-h{self.max_height}-no"
             else:
-                # For non-Google URLs, just remove parameters after =
-                url = url.split("=")[0]
-            
-            response = requests.get(url, stream=True, timeout=10)
+                download_url = url.split("=")[0]
+
+            response = requests.get(download_url, stream=True, timeout=10)
             response.raise_for_status()
 
             with open(filepath, 'wb') as f:
