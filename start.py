@@ -300,6 +300,126 @@ def _run_migrate(config, args):
         print(f"Migrated from MongoDB: {stats}")
 
 
+# ------------------------------------------------------------------
+# API key management commands
+# ------------------------------------------------------------------
+
+def _run_api_key_create(config, args):
+    """Create a new API key."""
+    from modules.api_keys import ApiKeyDB
+
+    db = ApiKeyDB(_get_db_path(config, args))
+    try:
+        key_id, raw_key = db.create_key(args.name)
+        print(f"Created API key #{key_id} for '{args.name}'")
+        print(f"Key: {raw_key}")
+        print("Store this key securely — it cannot be retrieved later.")
+    finally:
+        db.close()
+
+
+def _run_api_key_list(config, args):
+    """List all API keys."""
+    from modules.api_keys import ApiKeyDB
+
+    db = ApiKeyDB(_get_db_path(config, args))
+    try:
+        keys = db.list_keys()
+        if not keys:
+            print("No API keys found.")
+            return
+        print(f"{'ID':<5} {'Name':<20} {'Prefix':<18} {'Active':<8} {'Uses':<8} {'Last Used':<20}")
+        print("=" * 79)
+        for k in keys:
+            active = "yes" if k["is_active"] else "REVOKED"
+            last_used = k["last_used_at"] or "never"
+            print(f"{k['id']:<5} {k['name']:<20} {k['key_prefix']:<18} "
+                  f"{active:<8} {k['usage_count']:<8} {last_used:<20}")
+    finally:
+        db.close()
+
+
+def _run_api_key_revoke(config, args):
+    """Revoke an API key."""
+    from modules.api_keys import ApiKeyDB
+
+    db = ApiKeyDB(_get_db_path(config, args))
+    try:
+        if db.revoke_key(args.key_id):
+            print(f"API key #{args.key_id} revoked.")
+        else:
+            print(f"Key #{args.key_id} not found or already revoked.")
+    finally:
+        db.close()
+
+
+def _run_api_key_stats(config, args):
+    """Show API key usage statistics."""
+    from modules.api_keys import ApiKeyDB
+
+    db = ApiKeyDB(_get_db_path(config, args))
+    try:
+        stats = db.get_key_stats(args.key_id)
+        if not stats:
+            print(f"Key #{args.key_id} not found.")
+            return
+        active = "active" if stats["is_active"] else "REVOKED"
+        print(f"Key #{stats['id']}: {stats['name']} ({active})")
+        print(f"  Prefix:    {stats['key_prefix']}")
+        print(f"  Created:   {stats['created_at']}")
+        print(f"  Last used: {stats['last_used_at'] or 'never'}")
+        print(f"  Uses:      {stats['usage_count']}")
+        recent = stats.get("recent_requests", [])
+        if recent:
+            print(f"\n  Recent requests ({len(recent)}):")
+            for r in recent:
+                print(f"    {r['timestamp']}  {r['method']} {r['endpoint']}  -> {r['status_code']}")
+    finally:
+        db.close()
+
+
+def _run_audit_log(config, args):
+    """Query the API audit log."""
+    from modules.api_keys import ApiKeyDB
+
+    db = ApiKeyDB(_get_db_path(config, args))
+    try:
+        rows = db.query_audit_log(
+            key_id=getattr(args, "key_id", None),
+            limit=getattr(args, "limit", 50),
+            since=getattr(args, "since", None),
+        )
+        if not rows:
+            print("No audit log entries found.")
+            return
+        print(f"{'ID':<6} {'Timestamp':<20} {'Key':<12} {'Method':<8} {'Endpoint':<30} {'Status':<7} {'ms':<6}")
+        print("=" * 89)
+        for r in rows:
+            key_label = r.get("key_name") or str(r.get("key_id") or "-")
+            print(f"{r['id']:<6} {r['timestamp']:<20} {key_label:<12} "
+                  f"{r['method']:<8} {r['endpoint']:<30} "
+                  f"{r.get('status_code') or '-':<7} {r.get('response_time_ms') or '-':<6}")
+    finally:
+        db.close()
+
+
+def _run_prune_audit(config, args):
+    """Prune old API audit log entries."""
+    from modules.api_keys import ApiKeyDB
+
+    db = ApiKeyDB(_get_db_path(config, args))
+    try:
+        days = getattr(args, "older_than_days", 90)
+        dry_run = getattr(args, "dry_run", False)
+        count = db.prune_audit_log(days, dry_run)
+        if dry_run:
+            print(f"Would prune {count} audit entries older than {days} days.")
+        else:
+            print(f"Pruned {count} audit entries older than {days} days.")
+    finally:
+        db.close()
+
+
 def main():
     """Main function to initialize and run the scraper or management commands."""
     args = parse_arguments()
@@ -315,6 +435,12 @@ def main():
         "sync-status": _run_sync_status,
         "prune-history": _run_prune_history,
         "migrate": _run_migrate,
+        "api-key-create": _run_api_key_create,
+        "api-key-list": _run_api_key_list,
+        "api-key-revoke": _run_api_key_revoke,
+        "api-key-stats": _run_api_key_stats,
+        "audit-log": _run_audit_log,
+        "prune-audit": _run_prune_audit,
     }
 
     handler = commands.get(args.command)

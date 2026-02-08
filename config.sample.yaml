@@ -5,6 +5,13 @@
 # All settings below show their default values unless noted otherwise.
 
 # -----------------------------------------------------------------------------
+# API Server (optional - only needed when running api_server.py)
+# -----------------------------------------------------------------------------
+api:
+  allowed_origins: "*"          # Comma-separated CORS origins (env var ALLOWED_ORIGINS takes precedence)
+  # API keys are managed via SQLite: python start.py api-key-create "my-key"
+
+# -----------------------------------------------------------------------------
 # Scraper
 # -----------------------------------------------------------------------------
 headless: true                  # Run Chrome without visible browser window
@@ -98,6 +105,7 @@ custom_url_base: ""
 custom_url_profiles: "/profiles/"
 custom_url_reviews: "/reviews/"
 preserve_original_urls: true    # Keep originals in original_* fields
+store_local_paths: true         # Store local filenames in local_images/local_profile_picture fields
 
 # -----------------------------------------------------------------------------
 # JSON Backup (optional)

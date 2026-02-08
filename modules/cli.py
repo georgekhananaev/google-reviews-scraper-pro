@@ -2,15 +2,21 @@
 Command line interface handling for Google Maps Reviews Scraper.
 
 Subcommands:
-  scrape        Scrape reviews (default behavior)
-  export        Export reviews from DB to JSON/CSV
-  db-stats      Show database statistics
-  clear         Clear data for a place or all places
-  hide          Soft-delete a review
-  restore       Restore a soft-deleted review
-  sync-status   Show sync checkpoint status
-  prune-history Prune old audit history entries
-  migrate       Import existing JSON/MongoDB data into SQLite
+  scrape          Scrape reviews (default behavior)
+  export          Export reviews from DB to JSON/CSV
+  db-stats        Show database statistics
+  clear           Clear data for a place or all places
+  hide            Soft-delete a review
+  restore         Restore a soft-deleted review
+  sync-status     Show sync checkpoint status
+  prune-history   Prune old audit history entries
+  migrate         Import existing JSON/MongoDB data into SQLite
+  api-key-create  Create a new API key
+  api-key-list    List all API keys
+  api-key-revoke  Revoke an API key
+  api-key-stats   Show API key usage statistics
+  audit-log       Query the API audit log
+  prune-audit     Prune old audit log entries
 """
 
 import argparse
@@ -231,6 +237,44 @@ def _build_management_parsers(sub: argparse._SubParsersAction) -> None:
     )
 
 
+def _build_api_key_parsers(sub: argparse._SubParsersAction) -> None:
+    """Build API key management subcommands."""
+    # api-key-create
+    sp = sub.add_parser("api-key-create", help="Create a new API key")
+    _add_common_args(sp)
+    sp.add_argument("name", help="descriptive name for this key")
+
+    # api-key-list
+    sp = sub.add_parser("api-key-list", help="List all API keys")
+    _add_common_args(sp)
+
+    # api-key-revoke
+    sp = sub.add_parser("api-key-revoke", help="Revoke an API key")
+    _add_common_args(sp)
+    sp.add_argument("key_id", type=int, help="ID of the key to revoke")
+
+    # api-key-stats
+    sp = sub.add_parser("api-key-stats", help="Show API key usage statistics")
+    _add_common_args(sp)
+    sp.add_argument("key_id", type=int, help="ID of the key")
+
+    # audit-log
+    sp = sub.add_parser("audit-log", help="Query the API audit log")
+    _add_common_args(sp)
+    sp.add_argument("--key-id", type=int, default=None, help="filter by key ID")
+    sp.add_argument("--limit", type=int, default=50, help="max rows (default: 50)")
+    sp.add_argument("--since", type=str, default=None, help="ISO timestamp lower bound")
+
+    # prune-audit
+    sp = sub.add_parser("prune-audit", help="Prune old API audit log entries")
+    _add_common_args(sp)
+    sp.add_argument(
+        "--older-than-days", type=int, default=90,
+        help="delete entries older than N days (default: 90)",
+    )
+    sp.add_argument("--dry-run", action="store_true", help="show count without deleting")
+
+
 def parse_arguments():
     """Parse command line arguments with subcommands."""
     ap = argparse.ArgumentParser(
@@ -242,6 +286,7 @@ def parse_arguments():
     _build_scrape_parser(sub)
     _build_export_parser(sub)
     _build_management_parsers(sub)
+    _build_api_key_parsers(sub)
 
     # If no subcommand given, add top-level scrape args for backward compat
     _add_common_args(ap)

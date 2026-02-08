@@ -109,6 +109,8 @@ businesses:
       uri: "mongodb://prod-mongo.enterprise.com:27017"
       database: "enterprise_reviews"
       collection: "google"
+      tls_allow_invalid_certs: false
+      sync_mode: "update"
     use_s3: true
     s3:
       aws_access_key_id: "AKIA..."
@@ -120,7 +122,9 @@ businesses:
       reviews_folder: "reviews/"
       delete_local_after_upload: true
       s3_base_url: "https://cdn.enterprise.com/reviews/google"
+      sync_mode: "update"
     replace_urls: true
+    store_local_paths: true
     custom_url_base: "https://cdn.enterprise.com/reviews/google"
     custom_url_profiles: "/profiles/"
     custom_url_reviews: "/reviews/"
@@ -170,7 +174,8 @@ businesses:
 #   max_width              integer
 #   max_height             integer
 #   use_mongodb            true/false
-#   mongodb                uri, database, collection, sync_mode
+#   mongodb                uri, database, collection, sync_mode,
+#                          tls_allow_invalid_certs
 #   use_s3                 true/false
 #   s3                     aws_access_key_id, aws_secret_access_key,
 #                          region_name, bucket_name, prefix,
@@ -182,6 +187,7 @@ businesses:
 #   custom_url_profiles    path string
 #   custom_url_reviews     path string
 #   preserve_original_urls true/false
+#   store_local_paths      true/false
 #   backup_to_json         true/false
 #   json_path              file path
 # =============================================================================

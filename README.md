@@ -272,38 +272,52 @@ python api_server.py
 # Interactive docs: http://localhost:8000/docs
 ```
 
-### Authentication
+### Authentication (SQLite-Managed API Keys)
 
-Set the `API_KEY` environment variable to enable API key authentication on all endpoints:
+API keys are managed via SQLite — hashed with SHA-256 and stored in `reviews.db`. Every API request is audit-logged with key ID, endpoint, response time, and client IP.
 
 ```bash
-# Enable auth (recommended for production)
-API_KEY=your-secret-key python api_server.py
+# Create a named key (prints the raw key — store it securely!)
+python start.py api-key-create "production-frontend"
 
-# Without auth (development only)
-python api_server.py
+# List all keys with usage stats
+python start.py api-key-list
+
+# Show detailed stats + recent requests for a key
+python start.py api-key-stats 1
+
+# Revoke a key (immediate, cannot be undone)
+python start.py api-key-revoke 1
+
+# View audit log (who called what, when, how fast)
+python start.py audit-log
+python start.py audit-log --key-id 1 --limit 20
+
+# Prune old audit entries
+python start.py prune-audit --older-than-days 90
+python start.py prune-audit --dry-run
 ```
 
-When `API_KEY` is set, every request must include the `X-API-Key` header:
+When at least one active DB key exists, all endpoints require a valid `X-API-Key` header. If no keys exist, auth is disabled (open access).
 
 ```bash
 # Start a scraping job (with auth)
 curl -X POST "http://localhost:8000/scrape" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: your-secret-key" \
+  -H "X-API-Key: grs_your_key_here" \
   -d '{"url": "https://maps.app.goo.gl/YOUR_URL", "headless": true}'
 
 # Check job status
-curl -H "X-API-Key: your-secret-key" "http://localhost:8000/jobs/{job_id}"
+curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}"
 
 # List all jobs
-curl -H "X-API-Key: your-secret-key" "http://localhost:8000/jobs"
+curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs"
 
 # Cancel a running job (actually stops the scraper)
-curl -X POST -H "X-API-Key: your-secret-key" "http://localhost:8000/jobs/{job_id}/cancel"
+curl -X POST -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}/cancel"
 
 # Delete a completed/failed/cancelled job
-curl -X DELETE -H "X-API-Key: your-secret-key" "http://localhost:8000/jobs/{job_id}"
+curl -X DELETE -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}"
 ```
 
 ### CORS Configuration
@@ -322,7 +336,6 @@ python api_server.py
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `API_KEY` | _(empty — auth disabled)_ | API key for `X-API-Key` header authentication |
 | `ALLOWED_ORIGINS` | `*` | Comma-separated list of allowed CORS origins |
 
 ## Output Structure
