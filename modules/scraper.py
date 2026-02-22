@@ -442,7 +442,7 @@ class GoogleReviewsScraper:
         try:
             # Strategy 1: Data attribute detection (most reliable across languages)
             tab_index = tab.get_attribute("data-tab-index")
-            if tab_index == "1" or tab_index == "reviews":
+            if tab_index == "reviews":
                 return True
 
             # Strategy 2: Role and aria attributes (accessibility detection)
