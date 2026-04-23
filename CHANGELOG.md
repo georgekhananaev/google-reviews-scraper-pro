@@ -4,6 +4,9 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+### Fixed
+- **Rate-limit detection now actually triggers** — `_RateLimited` is raised from the driver-probe loop when `driver.current_url` matches `/sorry/`, `recaptcha`, or `captcha`. Previously the exception class and cooldown handler shipped in v1.2.2 but nothing raised the exception, so the CAPTCHA-cooldown path was dead code.
+
 ## [1.2.2] - 2026-04-23
 
 ### Added

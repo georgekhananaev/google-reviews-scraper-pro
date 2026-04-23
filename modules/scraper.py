@@ -1596,6 +1596,25 @@ class GoogleReviewsScraper:
                         WebDriverException) as probe_err:
                     raise _DriverSessionLost(str(probe_err)) from probe_err
 
+                # Rate-limit / CAPTCHA probe. Google routes rate-limited
+                # clients to /sorry/ or shows a reCAPTCHA interstitial.
+                # Either signal means we should cool down instead of
+                # continuing to scroll.
+                try:
+                    current_url = (driver.current_url or "").lower()
+                    if (
+                        "/sorry/" in current_url
+                        or "recaptcha" in current_url
+                        or "captcha" in current_url
+                    ):
+                        raise _RateLimited(
+                            f"rate-limit redirect detected: {current_url}"
+                        )
+                except WebDriverException:
+                    # Session already dead — the probe above will surface it
+                    # on the next iteration. Don't double-report.
+                    pass
+
                 try:
                     cards = pane.find_elements(By.CSS_SELECTOR, CARD_SEL)
                     fresh_cards: List[WebElement] = []
