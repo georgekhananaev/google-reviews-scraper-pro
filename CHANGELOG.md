@@ -4,6 +4,8 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-04-23
+
 ### Added
 - **Date-range filter** (issue #19) — `date_filter.after` / `date_filter.before` in config, plus `--after` / `--before` / `--date-mode` CLI flags and a `date_filter` field on `POST /scrape`. Two modes: `post_filter` (default — filters writes to MongoDB/JSON/S3; SQLite retains everything) and `early_stop` (requires `sort_by: newest`; stops scrolling after 3 consecutive cards older than `after`).
 - **Sub-review / category ratings** (issue #18) — `RawReview.sub_ratings` captures per-category scores (Service/Food/Cleanliness/Rooms/…) shown on hotels and restaurants. New nullable `reviews.sub_ratings` column (additive migration to schema v2). Canonical English keys; unknown labels preserved in `_other`. Multilingual label canonicalization in new `modules/sub_rating_labels.py`.
