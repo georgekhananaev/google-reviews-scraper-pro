@@ -147,6 +147,63 @@ backup_to_json: true
 json_path: "google_reviews.json"
 
 # -----------------------------------------------------------------------------
+# Date-Range Filter (optional, v1.2.2+)
+# -----------------------------------------------------------------------------
+# Only keep reviews whose parsed date falls inside [after, before].
+# Leave after/before empty to disable (default).
+#
+# Modes:
+#   "post_filter" — filter at write time; scrolls the whole feed, drops
+#                   out-of-range reviews before MongoDB/JSON/S3. Works with any sort.
+#   "early_stop"  — stop scrolling when 3 consecutive reviews are older than
+#                   `after`. Requires sort_by: newest. Faster.
+#
+# date_filter:
+#   after: "2025-06-01"             # ISO date or ISO datetime
+#   before: "2025-09-30"             # optional upper bound
+#   mode: "post_filter"              # post_filter | early_stop
+#   on_unparseable_date: "include"   # include | exclude
+
+# -----------------------------------------------------------------------------
+# Resilience (optional, v1.2.2+)
+# -----------------------------------------------------------------------------
+# Driver crash recovery + Google rate-limit cooldown.
+# Defaults below are applied even without this block — shown for visibility.
+#
+# resilience:
+#   retry_on_session_death: 1            # Restart with a fresh driver on Chrome crash
+#   retry_backoff_base_seconds: 3        # Exponential: 3s, 9s, 27s...
+#   rate_limit_cooldown_seconds: 60      # Sleep when Google redirects to /sorry/ or CAPTCHA
+
+# -----------------------------------------------------------------------------
+# Health Probe (optional, v1.2.2+)
+# -----------------------------------------------------------------------------
+# URL used by `python start.py health` and as a known-good reference for the
+# `/health/scrape` API endpoint.
+#
+# health:
+#   synthetic_url: "https://maps.app.goo.gl/KNOWN_GOOD_PLACE"
+
+# -----------------------------------------------------------------------------
+# Audit Log Retention (optional, v1.2.2+)
+# -----------------------------------------------------------------------------
+# API audit_log rows older than this are pruned on API server startup.
+# Set to 0 to keep forever.
+#
+# audit:
+#   retention_days: 90
+
+# -----------------------------------------------------------------------------
+# Adaptive Tuning (advanced, v1.2.2+)
+# -----------------------------------------------------------------------------
+# Threshold for accepting a tab as the Reviews tab (weighted multi-signal score).
+# Lower = looser (accepts more). 0.0 reverts to pre-v1.2.2 behavior.
+# Don't touch unless Google changes their tab layout in a way our defaults miss.
+#
+# adaptive:
+#   tab_detection_threshold: 1.5
+
+# -----------------------------------------------------------------------------
 # Businesses
 # -----------------------------------------------------------------------------
 # Each entry requires a url. All other fields are optional overrides

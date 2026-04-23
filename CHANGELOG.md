@@ -7,6 +7,10 @@ All notable changes to Google Reviews Scraper Pro.
 ### Fixed
 - **Rate-limit detection now actually triggers** — `_RateLimited` is raised from the driver-probe loop when `driver.current_url` matches `/sorry/`, `recaptcha`, or `captcha`. Previously the exception class and cooldown handler shipped in v1.2.2 but nothing raised the exception, so the CAPTCHA-cooldown path was dead code.
 
+### Changed
+- **README.md** — Python badge extended to 3.14 (matches `pyproject.toml` classifiers). Feature list gains date-range filtering, sub-rating capture, indestructible scraping, and selector health telemetry. Config table documents the 5 new v1.2.2 sections (`date_filter`, `resilience`, `health`, `audit`, `adaptive`). API section adds `/health/scrape` example and a `POST /scrape` example with `date_filter` payload.
+- **config.sample.yaml** — commented example blocks for `date_filter`, `resilience`, `health`, `audit`, `adaptive` sections, each labelled `v1.2.2+` so users can see what's new.
+
 ## [1.2.2] - 2026-04-23
 
 ### Added

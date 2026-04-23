@@ -1,7 +1,7 @@
 # Google Reviews Scraper Pro (2026)
 
 ![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.2.2-brightgreen)
-![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
+![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 ![Last Update](https://img.shields.io/badge/Last%20Updated-April%202026-red)
 
@@ -24,6 +24,10 @@
 - **Time-Bending Magic**: Transforms Google's vague "2 weeks ago" garbage into precise ISO timestamps
 - **Battle-Hardened Resilience**: Network hiccups? Google's tricks? HAH! We eat those for breakfast
 - **Structured Logging**: Rich colored CLI output + rotating JSON log files in `logs/`. Filter and follow logs via `python start.py logs`
+- **Date-Range Filtering**: Scrape only reviews within a window — `--after 2025-06-01 --before 2025-09-30`. Early-stop mode (when sorted newest) bails out the moment we hit older reviews. Not a second wasted.
+- **Sub-Rating Capture**: Hotels & restaurants get per-category scores (Service, Food, Cleanliness, Rooms, etc.) in 10+ languages. Unknown categories land in `_other` — no data dropped.
+- **Indestructible Scraping**: Chrome crash? CAPTCHA? Rate limit? The scraper probes the driver every scroll, flushes partial data, retries with a fresh browser. Your scrape doesn't die — it reboots.
+- **Selector Health Telemetry**: We log every selector hit/miss into SQLite. `python start.py selector-health` spots Google DOM changes before they become support tickets.
 
 ## Battle Station Requirements
 
@@ -173,6 +177,16 @@ See `config.sample.yaml` for all available settings and `config.businesses.sampl
 | | `log_file` | `"scraper.log"` | Log file name (inside `log_dir`) |
 | **JSON** | `backup_to_json` | `true` | Export JSON snapshot after each scrape |
 | | `json_path` | `"google_reviews.json"` | Output file path |
+| **Date Filter** | `date_filter.after` | `""` | ISO date; keep only reviews on/after this (disabled if empty) |
+| | `date_filter.before` | `""` | ISO date; keep only reviews on/before this |
+| | `date_filter.mode` | `"post_filter"` | `post_filter` (applies at write time) or `early_stop` (quits scrolling when sorted newest) |
+| | `date_filter.on_unparseable_date` | `"include"` | `include` or `exclude` — what to do with review dates the parser couldn't understand |
+| **Resilience** | `resilience.retry_on_session_death` | `1` | Retries with a fresh driver when Chrome crashes mid-scrape |
+| | `resilience.retry_backoff_base_seconds` | `3` | Exponential backoff base (3s → 9s → 27s) |
+| | `resilience.rate_limit_cooldown_seconds` | `60` | Sleep duration when Google shows `/sorry/` or a CAPTCHA |
+| **Health Probe** | `health.synthetic_url` | `""` | Place URL used by `python start.py health` to verify end-to-end scraping |
+| **Audit** | `audit.retention_days` | `90` | API audit log rows older than this get pruned on API server startup |
+| **Adaptive** | `adaptive.tab_detection_threshold` | `1.5` | Lower = looser tab-matching; `0.0` reverts to pre-v1.2.2 behavior |
 
 ## Unleashing Hell
 
@@ -318,6 +332,9 @@ Endpoints are organized into 5 tagged groups (visible in `/docs`):
 # Health check (no auth)
 curl http://localhost:8000/
 
+# Scraper health probe — status + counts of empty/degraded sessions (last 24h)
+curl -H "X-API-Key: grs_your_key_here" http://localhost:8000/health/scrape
+
 # Database statistics (places, reviews, sessions, db size)
 curl -H "X-API-Key: grs_your_key_here" http://localhost:8000/db-stats
 
@@ -333,6 +350,19 @@ curl -X POST "http://localhost:8000/scrape" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: grs_your_key_here" \
   -d '{"url": "https://maps.app.goo.gl/YOUR_URL", "headless": true}'
+
+# Start a scraping job with a date-range filter (v1.2.2+)
+curl -X POST "http://localhost:8000/scrape" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: grs_your_key_here" \
+  -d '{
+    "url": "https://maps.app.goo.gl/YOUR_URL",
+    "date_filter": {
+      "after": "2025-06-01",
+      "before": "2025-09-30",
+      "mode": "post_filter"
+    }
+  }'
 
 # List all jobs (with optional status filter)
 curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs"
