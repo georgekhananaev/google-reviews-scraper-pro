@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, Any, Set
 
 from modules.date_converter import DateConverter
+from modules.date_filter import DateFilter
 from modules.image_handler import ImageHandler
 from modules.s3_handler import S3Handler
 
@@ -69,6 +70,11 @@ class ImageTask(SyncTask):
     @property
     def enabled(self) -> bool:
         return self.config.get("download_images", False)
+
+    def set_browser_cookies(self, cookies):
+        """Forward browser cookies (from Selenium) to the image HTTP session."""
+        if cookies:
+            self._handler.apply_browser_cookies(cookies)
 
     def run(self, reviews: Dict[str, Dict[str, Any]], place_id: str) -> None:
         if place_id:
@@ -279,6 +285,23 @@ class PostScrapeRunner:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self._tasks = self._build_tasks()
+        self._changed_ids: Set[str] | None = None
+
+    def set_browser_cookies(self, cookies):
+        """Forward cookies from the Selenium driver to downstream tasks."""
+        for task in self._tasks:
+            if hasattr(task, "set_browser_cookies"):
+                task.set_browser_cookies(cookies)
+
+    def set_changed_ids(self, changed_ids: Set[str] | None) -> None:
+        """
+        Tell the pipeline which review IDs were new/updated/restored this
+        session. Image + S3 tasks will skip unchanged reviews entirely —
+        avoids re-attempting HTTP downloads every scrape for URLs that have
+        already been fetched (or for 403-restricted URLs that will just fail
+        again). If None, all reviews are processed (backward compat).
+        """
+        self._changed_ids = changed_ids
 
     def _build_tasks(self):
         return [
@@ -301,16 +324,59 @@ class PostScrapeRunner:
             log.info("PostScrapeRunner: no reviews to process")
             return
 
+        # Apply date filter (issue #19) BEFORE image/S3/MongoDB tasks so
+        # those stages never process excluded reviews. SQLite retains
+        # everything — this filter affects downstream writes only.
+        date_filter = DateFilter(self.config)
+        if date_filter.enabled:
+            before_count = len(reviews)
+            filtered_ids = [
+                rid for rid, r in reviews.items()
+                if not date_filter.includes(r.get("review_date", ""))
+            ]
+            for rid in filtered_ids:
+                reviews.pop(rid, None)
+            log.info(
+                "PostScrapeRunner: date_filter (%s) kept %d/%d reviews",
+                date_filter.describe(), len(reviews), before_count,
+            )
+            if not reviews:
+                log.info("PostScrapeRunner: all reviews filtered out by date range")
+                return
+
         log.info("PostScrapeRunner: processing %d reviews through %d tasks",
                  len(reviews), len(self._tasks))
+
+        # Tasks that are expensive and idempotent get a scoped subset (only
+        # new/updated/restored reviews this session). Unchanged reviews are
+        # skipped — their images/S3 uploads/MongoDB docs are already in
+        # place from earlier runs.
+        SCOPED_TASKS = {"images", "s3", "mongodb"}
 
         for task in self._tasks:
             if not task.enabled:
                 log.debug("PostScrapeRunner: skipping disabled task '%s'", task.name)
                 continue
+            scoped_reviews = reviews
+            if task.name in SCOPED_TASKS and self._changed_ids is not None:
+                scoped_reviews = {
+                    rid: r for rid, r in reviews.items()
+                    if rid in self._changed_ids
+                }
+                if not scoped_reviews:
+                    log.info(
+                        "PostScrapeRunner: task '%s' skipped (no changed reviews)",
+                        task.name,
+                    )
+                    continue
+                if len(scoped_reviews) != len(reviews):
+                    log.info(
+                        "PostScrapeRunner: task '%s' scoped to %d/%d changed reviews",
+                        task.name, len(scoped_reviews), len(reviews),
+                    )
             t0 = time.time()
             try:
-                task.run(reviews, place_id)
+                task.run(scoped_reviews, place_id)
                 elapsed = time.time() - t0
                 log.info("PostScrapeRunner: task '%s' completed in %.2fs",
                          task.name, elapsed)

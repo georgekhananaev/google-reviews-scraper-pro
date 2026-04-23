@@ -64,6 +64,39 @@ DEFAULT_CONFIG = {
     "log_file": "scraper.log",
     "db_path": "reviews.db",
     "stop_threshold": 3,
+    # Opt-in date-range filter (issue #19). Omit or leave empty = disabled.
+    "date_filter": {
+        "after": "",
+        "before": "",
+        "mode": "post_filter",          # "post_filter" | "early_stop"
+        "on_unparseable_date": "include",
+        "timezone": "UTC",
+    },
+    # Resilience / retry config (issue #20).
+    "resilience": {
+        "retry_on_session_death": 1,
+        "retry_on_navigation_failure": 1,
+        "retry_backoff_base_seconds": 3,
+        "rate_limit_cooldown_seconds": 60,
+    },
+    # Health probe + metrics.
+    "health": {
+        "synthetic_url": "",
+        "synthetic_interval_minutes": 60,
+    },
+    "metrics": {
+        "enabled": False,
+        "path": "/metrics",
+    },
+    # Adaptive scoring threshold for tab detection (§2.1). Lower values
+    # accept looser matches; 0.0 reverts to v1.2.1 behavior.
+    "adaptive": {
+        "tab_detection_threshold": 1.5,
+    },
+    # Audit log retention (§5.4).
+    "audit": {
+        "retention_days": 90,
+    },
 }
 
 

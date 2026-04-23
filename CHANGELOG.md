@@ -4,6 +4,47 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+### Added
+- **Date-range filter** (issue #19) — `date_filter.after` / `date_filter.before` in config, plus `--after` / `--before` / `--date-mode` CLI flags and a `date_filter` field on `POST /scrape`. Two modes: `post_filter` (default — filters writes to MongoDB/JSON/S3; SQLite retains everything) and `early_stop` (requires `sort_by: newest`; stops scrolling after 3 consecutive cards older than `after`).
+- **Sub-review / category ratings** (issue #18) — `RawReview.sub_ratings` captures per-category scores (Service/Food/Cleanliness/Rooms/…) shown on hotels and restaurants. New nullable `reviews.sub_ratings` column (additive migration to schema v2). Canonical English keys; unknown labels preserved in `_other`. Multilingual label canonicalization in new `modules/sub_rating_labels.py`.
+- **Driver session-death recovery** (issue #20) — new `resilience` config section with `retry_on_session_death`, `retry_backoff_base_seconds`, `rate_limit_cooldown_seconds`. Scraper probes the driver each scroll iteration; on `InvalidSessionIdException` / `WebDriverException` it flushes partial results, marks the session `partial`, and retries once with a fresh driver. Rate-limit signals set status `rate_limited` and enforce a cooldown.
+- **Scoped post-scrape pipeline** — `PostScrapeRunner.set_changed_ids()` lets the scraper tell the pipeline which reviews actually changed. Image, S3, and MongoDB tasks skip unchanged reviews entirely. Typical repeat scrape of an existing place: from hundreds of filename + HTTP checks down to zero.
+- **Selector health telemetry** — new `selector_health` SQLite table records hit/miss/stale outcomes per CSS selector per scrape session. New `python start.py selector-health` CLI prints hit-rate across recent sessions so DOM regressions surface as telemetry, not support tickets.
+- **Scraper health endpoint** — `GET /health/scrape` returns `{status, last_session_status, empty_sessions_24h, degraded_sessions_24h, last_synthetic_success}` derived from recent session rows. Good for uptime probes / dashboards.
+- **`health` CLI command** — `python start.py health --url <URL>` runs a synthetic single-review scrape to verify end-to-end scraping is working.
+- **`db-vacuum` CLI command** — `python start.py db-vacuum` runs `PRAGMA wal_checkpoint(TRUNCATE)` + `VACUUM` to reclaim space and truncate the WAL.
+- **Session-status granularity** — completed sessions now get `"empty"` when zero reviews extracted, `"degraded"` when >30% of cards failed parsing, plus `"partial"` / `"rate_limited"` from the resilience layer. Previously everything was `"completed"`.
+- **Browser cookie forwarding** — scraper extracts cookies from the Selenium driver before quit and passes them to the `ImageHandler.requests.Session`. Unlocks downloads for newer `ABOP9p…`-prefix googleusercontent URLs that were previously returning 403.
+- **Google Maps URL allowlist** on `POST /scrape` — rejects non-Google URLs with 400 before queuing a job. Prevents abuse of the job queue with arbitrary URLs.
+- **Image host allowlist** — SSRF guard on `ImageHandler`, only downloads from `googleusercontent.com` / `ggpht.com` / `gstatic.com` / `google.com` subdomains.
+- **Graceful startup** — API server boots even if the API key DB or review DB fails to initialize (fails closed rather than crashing). Audit log pruned on startup per `audit.retention_days` (default 90).
+- **`constraints.txt`** — known-good exact dependency versions for reproducible installs: `pip install -r requirements.txt -c constraints.txt`.
+- **New config sections** — `date_filter`, `resilience`, `health`, `metrics`, `adaptive`, `audit`. All optional; omitting them preserves v1.2.1 behavior exactly.
+- **44 new tests** — `test_scraper_tab_detection.py` (tab-scoring regression), `test_date_filter.py` (inclusion/early-stop semantics), `test_sub_ratings.py` (canonicalization + DB merge), `test_api_concurrency.py` (cross-thread sqlite stress).
+
+### Fixed
+- **Menu-tab misclick** (issues #21, #17, and part of #15) — `is_reviews_tab()` rewritten with weighted multi-signal scoring. `data-tab-index="1"` alone is no longer accepted; the tab must also match a review keyword in aria-label or text, and is penalized if it matches a known non-review label (Menu, Photos, Overview, …). `[role="tab"][aria-label*="review" i]` and localized variants moved to the top of the selector list; `[data-tab-index="1"]` demoted to last resort.
+- **Silent-stub parse** — parse failures during scroll no longer store an empty `RawReview(id, text="", lang="und")` stub that polluted content hashes downstream. Failed cards are skipped and counted via `batch_stats["parse_errors"]`.
+- **Silent review truncation** — `models.py` hardcoded `MORE_BTN = "button.kyuRq"` now has fallback selectors; if Google changes the class name, review text is no longer silently truncated at ~280 chars. Same pattern applied to photo, rating, date, owner-response, and text selectors.
+- **Cross-thread sqlite `ProgrammingError`** — the single shared `ReviewDB` on `app.state` now uses `check_same_thread=False` + an internal `threading.RLock` on writes. Previously a latent crash waiting to hit under concurrent API load.
+- **Non-atomic review upsert** — insert/update and `review_history` log now share a single `backend.transaction()`. Review can no longer exist without its audit trail.
+- **Timing channel in API key verify** — switched to `secrets.compare_digest` over all active keys. Match case no longer short-circuits.
+- **20 bare `except:` blocks** in `modules/scraper.py` replaced with `except Exception:` — no longer swallows `KeyboardInterrupt` / `SystemExit`.
+- **Empty-stub review count** — session `reviews_found` now reports real reviews, not stubs.
+- **WAL growth** — `SQLiteBackend.close()` runs `PRAGMA wal_checkpoint(TRUNCATE)`; prevents unbounded `.db-wal` file.
+- **`ScrapeRequest` error leak** — 500 responses no longer include raw exception text; log it server-side only.
+- **Filename truncation** — `ImageHandler._sanitize_filename` cap raised from 120 to 200 chars so googleusercontent tokens (~142 chars) aren't truncated into collisions.
+
+### Changed
+- **Python 3.14 supported** — `pydantic` pin relaxed from `~=2.11.5` to `>=2.11.5,<3` in both `requirements.txt` and `pyproject.toml`. Adds `Programming Language :: Python :: 3.14` classifier.
+- **Language detection** — `detect_lang()` now identifies Arabic, Hindi, Russian, Greek, Korean, Japanese, and Chinese in addition to Hebrew and Thai. Covers the 25+ languages the date parser already supports.
+- **Extended `REVIEW_WORDS`** with French (`avis`, `critiques`), German, Spanish, Portuguese, Italian, Russian, Polish, Turkish, Vietnamese, Indonesian, Swedish, Norwegian, Danish, Finnish, Greek, Czech, Romanian, Hungarian, Bulgarian. New `NON_REVIEW_TAB_WORDS` set used for penalty scoring.
+- **Multilingual limited-view detection** — `_is_limited_view()` checks French/German/Spanish/Hebrew/Thai/Russian/Japanese/Korean/Chinese/Arabic/Turkish/Polish/Dutch strings, plus a structural signal (sign-in button present + zero tabs).
+- **403 logging** — per-URL errors demoted to DEBUG; a single summary info line replaces the error wall at end of batch.
+
+### Removed
+- Empty-stub review entries on parse failure — previously written, now skipped.
+
 ## [1.2.1] - 2026-02-09
 
 ### Added

@@ -276,6 +276,32 @@ def _build_api_key_parsers(sub: argparse._SubParsersAction) -> None:
     sp.add_argument("--dry-run", action="store_true", help="show count without deleting")
 
 
+def _build_selector_health_parser(sub: argparse._SubParsersAction) -> None:
+    """Build the 'selector-health' subcommand."""
+    sp = sub.add_parser("selector-health", help="Show selector hit-rate telemetry")
+    _add_common_args(sp)
+    sp.add_argument(
+        "--sessions", type=int, default=30,
+        help="include last N sessions (default: 30)",
+    )
+
+
+def _build_db_vacuum_parser(sub: argparse._SubParsersAction) -> None:
+    """Build the 'db-vacuum' subcommand."""
+    sp = sub.add_parser("db-vacuum", help="Checkpoint WAL and VACUUM the database")
+    _add_common_args(sp)
+
+
+def _build_health_parser(sub: argparse._SubParsersAction) -> None:
+    """Build the 'health' subcommand — synthetic scraper probe."""
+    sp = sub.add_parser("health", help="Run synthetic scraper health probe")
+    _add_common_args(sp)
+    sp.add_argument(
+        "--url", type=str, default=None,
+        help="place URL to probe (overrides health.synthetic_url config)",
+    )
+
+
 def _build_logs_parser(sub: argparse._SubParsersAction) -> None:
     """Build the 'logs' subcommand."""
     sp = sub.add_parser("logs", help="View structured JSON log files")
@@ -307,6 +333,20 @@ def parse_arguments():
     _build_management_parsers(sub)
     _build_api_key_parsers(sub)
     _build_logs_parser(sub)
+    _build_selector_health_parser(sub)
+    _build_db_vacuum_parser(sub)
+    _build_health_parser(sub)
+
+    # Accept opt-in date-range filter flags at both subcommand and top level
+    for parent in (sub.choices.get("scrape"), ap):
+        if parent is None:
+            continue
+        parent.add_argument("--after", type=str, default=None,
+                            help="only include reviews on/after ISO date (e.g. 2025-06-01)")
+        parent.add_argument("--before", type=str, default=None,
+                            help="only include reviews on/before ISO date")
+        parent.add_argument("--date-mode", choices=("post_filter", "early_stop"),
+                            default=None, help="date filter mode (default: post_filter)")
 
     # If no subcommand given, add top-level scrape args for backward compat
     _add_common_args(ap)

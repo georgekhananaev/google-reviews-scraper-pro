@@ -25,11 +25,29 @@ HEB_CHARS = re.compile(r"[\u0590-\u05FF]")
 THAI_CHARS = re.compile(r"[\u0E00-\u0E7F]")
 
 
+ARABIC_CHARS = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿ]")
+DEVANAGARI_CHARS = re.compile(r"[ऀ-ॿ]")
+CYRILLIC_CHARS = re.compile(r"[Ѐ-ӿ]")
+GREEK_CHARS = re.compile(r"[Ͱ-Ͽ]")
+HANGUL_CHARS = re.compile(r"[가-힯ᄀ-ᇿ㄰-㆏]")
+HIRAGANA_KATAKANA = re.compile(r"[぀-ヿ]")
+CJK_CHARS = re.compile(r"[一-鿿]")
+
+
 @lru_cache(maxsize=1024)
 def detect_lang(txt: str) -> str:
-    """Detect language based on character sets"""
-    if HEB_CHARS.search(txt):  return "he"
-    if THAI_CHARS.search(txt): return "th"
+    """Detect language from character sets. Returns ISO-639-1 code."""
+    if not txt:
+        return "en"
+    if HEB_CHARS.search(txt):         return "he"
+    if THAI_CHARS.search(txt):        return "th"
+    if ARABIC_CHARS.search(txt):      return "ar"
+    if DEVANAGARI_CHARS.search(txt):  return "hi"
+    if CYRILLIC_CHARS.search(txt):    return "ru"
+    if GREEK_CHARS.search(txt):       return "el"
+    if HANGUL_CHARS.search(txt):      return "ko"
+    if HIRAGANA_KATAKANA.search(txt): return "ja"
+    if CJK_CHARS.search(txt):         return "zh"
     return "en"
 
 

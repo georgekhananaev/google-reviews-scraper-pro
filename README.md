@@ -198,6 +198,12 @@ python start.py --scrape-mode full -q
 
 # Custom Tags Galore — brand these puppies however you want
 python start.py --custom-params '{"company":"Hotel California","location":"Los Angeles"}'
+
+# Date-range filter — only reviews from a specific window
+python start.py --after 2025-06-01 --before 2025-09-30
+
+# Same, but stop scrolling as soon as we hit older reviews (requires newest sort)
+python start.py --after 2025-06-01 --date-mode early_stop --sort newest
 ```
 
 ### Export Reviews
@@ -230,6 +236,19 @@ python start.py clear --place-id "0x305037cbd917b293:0" --confirm
 
 # Clear entire database
 python start.py clear --confirm
+
+# Checkpoint WAL + reclaim space
+python start.py db-vacuum
+```
+
+### Health & Telemetry
+
+```bash
+# Synthetic scraper health probe (single-review scrape against a place)
+python start.py health --url "https://maps.app.goo.gl/YOUR_URL"
+
+# Selector hit-rate across recent scrape sessions — detects DOM drift
+python start.py selector-health --sessions 30
 ```
 
 ### Review Management

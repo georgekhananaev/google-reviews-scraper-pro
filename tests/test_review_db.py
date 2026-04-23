@@ -352,7 +352,8 @@ class TestSchemaVersioning:
     """Tests for schema management."""
 
     def test_schema_version_on_init(self, db):
-        assert db.get_schema_version() == 1
+        from modules.review_db import SCHEMA_VERSION
+        assert db.get_schema_version() == SCHEMA_VERSION
 
     def test_schema_migration_idempotent(self, tmp_path):
         db1 = ReviewDB(str(tmp_path / "test.db"))

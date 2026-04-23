@@ -55,6 +55,19 @@ def _apply_scrape_overrides(config, args):
     if custom_params:
         config.setdefault("custom_params", {}).update(custom_params)
 
+    # Date-range filter CLI flags → date_filter config section (issue #19).
+    after = getattr(args, "after", None)
+    before = getattr(args, "before", None)
+    date_mode = getattr(args, "date_mode", None)
+    if after or before or date_mode:
+        df = config.setdefault("date_filter", {})
+        if after:
+            df["after"] = after
+        if before:
+            df["before"] = before
+        if date_mode:
+            df["mode"] = date_mode
+
 
 def _get_db_path(config, args):
     """Resolve database path from CLI args or config."""
@@ -421,6 +434,89 @@ def _run_prune_audit(config, args):
         db.close()
 
 
+def _run_selector_health(config, args):
+    """Show selector hit-rate telemetry across recent sessions."""
+    from modules.database_backend import SQLiteBackend
+    from modules.selector_health import aggregate_hit_rates
+
+    db_path = config.get("db_path", "reviews.db")
+    backend = SQLiteBackend(db_path)
+    backend.connect()
+    try:
+        rows = aggregate_hit_rates(backend, last_n_sessions=args.sessions)
+    finally:
+        backend.close()
+
+    if not rows:
+        print("No selector-health data collected yet.")
+        return
+
+    print(f"Selector health — last {args.sessions} sessions")
+    print(f"{'Selector':<60} {'Hits':>8} {'Miss':>8} {'Stale':>8} {'Rate':>8}")
+    print("=" * 100)
+    for r in rows:
+        sel = r["selector"]
+        if len(sel) > 58:
+            sel = sel[:55] + "..."
+        rate_pct = f"{int(r['hit_rate'] * 100)}%"
+        marker = "" if r["hit_rate"] >= 0.2 else " ⚠"
+        print(f"{sel:<60} {r['hits']:>8} {r['misses']:>8} {r['stales']:>8} {rate_pct:>8}{marker}")
+
+
+def _run_db_vacuum(config, args):
+    """Checkpoint WAL and run VACUUM on the review DB."""
+    from modules.database_backend import SQLiteBackend
+
+    db_path = config.get("db_path", "reviews.db")
+    backend = SQLiteBackend(db_path)
+    backend.connect()
+    try:
+        print(f"Running WAL checkpoint on {db_path}...")
+        backend.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        backend.commit()
+        print("Running VACUUM (may take a moment for large DBs)...")
+        backend.vacuum()
+        print("Done.")
+    finally:
+        backend.close()
+
+
+def _run_health(config, args):
+    """Run a synthetic scraper health probe."""
+    import sys
+    synthetic_url = (
+        getattr(args, "url", None)
+        or config.get("health", {}).get("synthetic_url", "")
+    )
+    if not synthetic_url:
+        print("No synthetic URL configured. Pass --url or set health.synthetic_url in config.yaml.")
+        sys.exit(2)
+
+    from modules.scraper import GoogleReviewsScraper
+
+    probe_config = dict(config)
+    probe_config["url"] = synthetic_url
+    probe_config["max_reviews"] = 1
+    probe_config["scrape_mode"] = "new_only"
+    probe_config["download_images"] = False
+    probe_config["use_mongodb"] = False
+    probe_config["backup_to_json"] = False
+
+    scraper = GoogleReviewsScraper(probe_config)
+    ok = False
+    try:
+        ok = bool(scraper.scrape())
+    except Exception as e:  # noqa: BLE001
+        print(f"Probe raised: {e}")
+        sys.exit(1)
+
+    if ok:
+        print(f"HEALTHY — synthetic scrape of {synthetic_url} succeeded.")
+    else:
+        print(f"UNHEALTHY — synthetic scrape of {synthetic_url} returned no reviews.")
+        sys.exit(1)
+
+
 def _run_logs(config, args):
     """Run the logs viewer command."""
     import sys
@@ -509,6 +605,9 @@ def main():
         "audit-log": _run_audit_log,
         "prune-audit": _run_prune_audit,
         "logs": _run_logs,
+        "selector-health": _run_selector_health,
+        "db-vacuum": _run_db_vacuum,
+        "health": _run_health,
     }
 
     handler = commands.get(args.command)

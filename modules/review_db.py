@@ -23,7 +23,7 @@ from modules.place_id import canonicalize_url
 
 log = logging.getLogger("scraper")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_DDL = """
 -- Schema version tracking (single-row model)
@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS reviews (
     content_hash   TEXT,
     engagement_hash TEXT,
     row_version    INTEGER NOT NULL DEFAULT 1,
+    sub_ratings    TEXT,
     PRIMARY KEY (review_id, place_id),
     FOREIGN KEY (place_id) REFERENCES places(place_id) ON DELETE CASCADE,
     FOREIGN KEY (last_seen_session) REFERENCES scrape_sessions(session_id) ON DELETE SET NULL,
@@ -363,26 +364,31 @@ class ReviewDB:
                 self._build_owner_dict(review), ensure_ascii=False
             )
 
-            self.backend.execute(
-                "INSERT INTO reviews ("
-                "review_id, place_id, author, rating, review_text, review_date, "
-                "raw_date, likes, user_images, profile_url, profile_picture, "
-                "owner_responses, created_date, last_modified, last_seen_session, "
-                "last_changed_session, is_deleted, content_hash, engagement_hash, row_version"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1)",
-                (review_id, place_id, review.get("author", ""),
-                 review.get("rating", 0), review_text,
-                 review.get("review_date", ""), review.get("date", ""),
-                 review.get("likes", 0), user_images,
-                 review.get("profile", ""), review.get("avatar", ""),
-                 owner_responses, now, now, session_id, session_id,
-                 content_hash, engagement_hash)
+            sub_ratings_json = json.dumps(
+                review.get("sub_ratings") or {}, ensure_ascii=False
             )
-            self.backend.commit()
-
-            self.log_history(review_id, place_id, "insert", session_id=session_id,
-                             new_content_hash=content_hash,
-                             new_engagement_hash=engagement_hash)
+            with self.backend.transaction():
+                self.backend.execute(
+                    "INSERT INTO reviews ("
+                    "review_id, place_id, author, rating, review_text, review_date, "
+                    "raw_date, likes, user_images, profile_url, profile_picture, "
+                    "owner_responses, created_date, last_modified, last_seen_session, "
+                    "last_changed_session, is_deleted, content_hash, engagement_hash, "
+                    "row_version, sub_ratings"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?)",
+                    (review_id, place_id, review.get("author", ""),
+                     review.get("rating", 0), review_text,
+                     review.get("review_date", ""), review.get("date", ""),
+                     review.get("likes", 0), user_images,
+                     review.get("profile", ""), review.get("avatar", ""),
+                     owner_responses, now, now, session_id, session_id,
+                     content_hash, engagement_hash, sub_ratings_json)
+                )
+                self.log_history(review_id, place_id, "insert",
+                                 session_id=session_id,
+                                 new_content_hash=content_hash,
+                                 new_engagement_hash=engagement_hash,
+                                 commit=False)
             return "new"
 
         # Existing review — check for changes
@@ -451,41 +457,65 @@ class ReviewDB:
         # Determine best likes
         likes = max(review.get("likes", 0), existing.get("likes", 0))
 
+        # Merge sub-ratings — additive: new keys win, existing keys survive.
+        merged_sub_ratings = existing.get("sub_ratings") or {}
+        if not isinstance(merged_sub_ratings, dict):
+            merged_sub_ratings = {}
+        new_sub_ratings = review.get("sub_ratings") or {}
+        if isinstance(new_sub_ratings, dict):
+            merged_sub_ratings = {**merged_sub_ratings, **new_sub_ratings}
+
         changed_fields = {}
         if content_changed:
             changed_fields["content_hash"] = [old_content_hash, new_content_hash]
         if engagement_changed:
             changed_fields["engagement_hash"] = [old_engagement_hash, new_engagement_hash]
 
-        # Optimistic locking with retry
+        # Optimistic locking with retry. Each attempt runs its own
+        # transaction that wraps both the UPDATE and the history log, so
+        # an update is never recorded without its audit trail (F-DB.1).
         old_version = existing.get("row_version", 1)
+        success = False
         for attempt in range(max_retries):
-            result = self.backend.execute(
-                "UPDATE reviews SET "
-                "author = ?, rating = ?, review_text = ?, review_date = ?, "
-                "raw_date = ?, likes = ?, user_images = ?, profile_url = ?, "
-                "profile_picture = ?, owner_responses = ?, last_modified = ?, "
-                "last_seen_session = ?, last_changed_session = ?, "
-                "is_deleted = 0, content_hash = ?, engagement_hash = ?, "
-                "row_version = row_version + 1 "
-                "WHERE review_id = ? AND place_id = ? AND row_version = ?",
-                (review.get("author", "") or existing.get("author", ""),
-                 review.get("rating", 0) or existing.get("rating", 0),
-                 json.dumps(merged_text, ensure_ascii=False),
-                 review.get("review_date", "") or existing.get("review_date", ""),
-                 review.get("date", "") or existing.get("raw_date", ""),
-                 likes,
-                 json.dumps(merged_images, ensure_ascii=False),
-                 review.get("profile", "") or existing.get("profile_url", ""),
-                 profile_picture,
-                 json.dumps(merged_owner, ensure_ascii=False),
-                 now, session_id, session_id,
-                 new_content_hash, new_engagement_hash,
-                 review_id, place_id, old_version)
-            )
-            self.backend.commit()
-
-            if result.rowcount > 0:
+            with self.backend.transaction():
+                result = self.backend.execute(
+                    "UPDATE reviews SET "
+                    "author = ?, rating = ?, review_text = ?, review_date = ?, "
+                    "raw_date = ?, likes = ?, user_images = ?, profile_url = ?, "
+                    "profile_picture = ?, owner_responses = ?, last_modified = ?, "
+                    "last_seen_session = ?, last_changed_session = ?, "
+                    "is_deleted = 0, content_hash = ?, engagement_hash = ?, "
+                    "sub_ratings = ?, row_version = row_version + 1 "
+                    "WHERE review_id = ? AND place_id = ? AND row_version = ?",
+                    (review.get("author", "") or existing.get("author", ""),
+                     review.get("rating", 0) or existing.get("rating", 0),
+                     json.dumps(merged_text, ensure_ascii=False),
+                     review.get("review_date", "") or existing.get("review_date", ""),
+                     review.get("date", "") or existing.get("raw_date", ""),
+                     likes,
+                     json.dumps(merged_images, ensure_ascii=False),
+                     review.get("profile", "") or existing.get("profile_url", ""),
+                     profile_picture,
+                     json.dumps(merged_owner, ensure_ascii=False),
+                     now, session_id, session_id,
+                     new_content_hash, new_engagement_hash,
+                     json.dumps(merged_sub_ratings, ensure_ascii=False),
+                     review_id, place_id, old_version)
+                )
+                if result.rowcount > 0:
+                    self.log_history(
+                        review_id, place_id,
+                        "restore" if was_deleted else "update",
+                        session_id=session_id,
+                        changed_fields=changed_fields if changed_fields else None,
+                        old_content_hash=old_content_hash,
+                        new_content_hash=new_content_hash,
+                        old_engagement_hash=old_engagement_hash,
+                        new_engagement_hash=new_engagement_hash,
+                        commit=False,
+                    )
+                    success = True
+            if success:
                 break
             # Row version changed — re-read and retry
             existing = self.get_review(review_id, place_id)
@@ -493,17 +523,14 @@ class ReviewDB:
                 return "new"  # concurrent delete, treat as new
             old_version = existing.get("row_version", 1)
 
-        action = "restored" if was_deleted else "updated"
-        self.log_history(
-            review_id, place_id, "restore" if was_deleted else "update",
-            session_id=session_id,
-            changed_fields=changed_fields if changed_fields else None,
-            old_content_hash=old_content_hash,
-            new_content_hash=new_content_hash,
-            old_engagement_hash=old_engagement_hash,
-            new_engagement_hash=new_engagement_hash
-        )
-        return action
+        if not success:
+            log.warning(
+                "upsert_review: gave up after %d attempts (row_version collision) "
+                "for review_id=%s place_id=%s",
+                max_retries, review_id, place_id,
+            )
+
+        return "restored" if was_deleted else "updated"
 
     def flush_batch(self, place_id: str, batch: List[Dict[str, Any]],
                     session_id: int, scrape_mode: str = "update") -> Dict[str, int]:
@@ -641,8 +668,16 @@ class ReviewDB:
                     changed_fields: Dict = None,
                     old_content_hash: str = None, new_content_hash: str = None,
                     old_engagement_hash: str = None,
-                    new_engagement_hash: str = None) -> None:
-        """Log a review mutation to the history table."""
+                    new_engagement_hash: str = None,
+                    commit: bool = True) -> None:
+        """
+        Log a review mutation to the history table.
+
+        `commit=False` lets callers batch the history write into an outer
+        transaction — used by upsert_review to keep insert + history atomic
+        (F-DB.1). Default True preserves backward compatibility for external
+        callers that expect standalone auto-commit.
+        """
         self.backend.execute(
             "INSERT INTO review_history ("
             "review_id, place_id, session_id, actor, action, changed_fields, "
@@ -654,7 +689,8 @@ class ReviewDB:
              old_content_hash, new_content_hash,
              old_engagement_hash, new_engagement_hash, _now_utc())
         )
-        self.backend.commit()
+        if commit:
+            self.backend.commit()
 
     def get_review_history(self, review_id: str, place_id: str) -> List[Dict]:
         """Get full change history for a specific review."""
@@ -997,7 +1033,7 @@ class ReviewDB:
     def _deserialize_review(row: Dict[str, Any]) -> Dict[str, Any]:
         """Deserialize JSON fields from a review row."""
         result = dict(row)
-        for field in ("review_text", "owner_responses", "s3_images"):
+        for field in ("review_text", "owner_responses", "s3_images", "sub_ratings"):
             if result.get(field) and isinstance(result[field], str):
                 try:
                     result[field] = json.loads(result[field])
@@ -1042,6 +1078,9 @@ class ReviewDB:
 
 # Migration definitions (version -> list of DDL statements)
 _MIGRATIONS: Dict[int, List[str]] = {
-    # Future migrations go here:
-    # 2: ["ALTER TABLE reviews ADD COLUMN new_field TEXT;"],
+    # v2: per-category sub-ratings (issue #18). Nullable column — fresh DBs
+    # get it via the main DDL; existing DBs via this migration. Additive only.
+    2: [
+        "ALTER TABLE reviews ADD COLUMN sub_ratings TEXT;",
+    ],
 }

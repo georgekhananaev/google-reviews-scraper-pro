@@ -3,9 +3,11 @@ Image downloading and handling for Google Maps Reviews Scraper.
 """
 
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Any, Set, Tuple
+from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -15,6 +17,49 @@ from modules.s3_handler import S3Handler
 
 # Logger
 log = logging.getLogger("scraper")
+
+# Host allowlist for image downloads (§5.11). Prevents abuse of the
+# scraper as an SSRF proxy — Google Maps images only come from these hosts.
+_ALLOWED_IMAGE_HOSTS = (
+    "googleusercontent.com",
+    "ggpht.com",
+    "gstatic.com",
+    "google.com",
+)
+
+# Characters considered safe in filenames after normalization.
+_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _is_allowed_image_host(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:  # noqa: BLE001
+        return False
+    return any(host == h or host.endswith("." + h) for h in _ALLOWED_IMAGE_HOSTS)
+
+
+def _sanitize_filename(name: str) -> str:
+    """
+    Normalize a filename to a safe subset. Defense-in-depth — Path.join
+    already blocks most traversal, but an explicit whitelist makes review
+    easier.
+
+    Cap at 200 chars so that `<name>.jpg` fits under the POSIX 255-byte
+    filesystem limit. Google userContent tokens are ~140 chars, so 200 is
+    comfortable. Earlier truncation to 120 was too aggressive and caused
+    filename collisions for long tokens.
+    """
+    name = name.replace("\x00", "").strip()
+    # Strip any directory components.
+    name = name.replace("/", "_").replace("\\", "_")
+    # Drop leading dots to block hidden files / traversal fragments.
+    while name.startswith(".") or name.startswith("-"):
+        name = name[1:]
+    name = _SAFE_FILENAME.sub("_", name)
+    if not name:
+        name = "image"
+    return name[:200]
 
 
 class ImageHandler:
@@ -52,9 +97,55 @@ class ImageHandler:
         self._session.mount("https://", HTTPAdapter(max_retries=retry))
         self._session.mount("http://", HTTPAdapter(max_retries=retry))
 
+        # Googleusercontent `geougc-cs/ABOP...` tokens require a google.com
+        # Referer + a recent browser UA; without them the CDN returns 403.
+        # Older `AMG...` tokens don't need this, but adding the headers is
+        # harmless for them and fixes the newer ones.
+        self._session.headers.update({
+            "Referer": "https://www.google.com/maps/",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/128.0.0.0 Safari/537.36"
+            ),
+        })
+
+        # Optional session cookies forwarded from Selenium. Set via
+        # apply_browser_cookies() — critical for newer geougc-cs tokens
+        # which are bound to the Maps session.
+        self._has_session_cookies = False
+
+        # 403-log de-duplication — Google 403s on many URLs at once; a
+        # wall of identical errors is noise. We aggregate and log a summary.
+        self._forbidden_count = 0
+
         # Initialize S3 handler
         self.s3_handler = S3Handler(config)
         self.use_s3 = config.get("use_s3", False)
+
+    def apply_browser_cookies(self, cookies):
+        """
+        Forward cookies captured from the Selenium WebDriver session to the
+        requests session. `cookies` is the list returned by
+        `driver.get_cookies()`.
+
+        Called by the scraper after navigation completes. Without these
+        cookies, newer googleusercontent tokens (ABOP9p... prefix) return
+        403 for all downloads.
+        """
+        if not cookies:
+            return
+        for c in cookies:
+            try:
+                self._session.cookies.set(
+                    c["name"], c["value"],
+                    domain=c.get("domain"),
+                    path=c.get("path", "/"),
+                )
+            except Exception:  # noqa: BLE001
+                continue
+        self._has_session_cookies = True
+        log.debug("ImageHandler: loaded %d browser cookies", len(cookies))
 
     def set_place_id(self, place_id: str):
         """Set place ID to organize images into per-business subdirectories."""
@@ -80,7 +171,7 @@ class ImageHandler:
         return True
 
     def get_filename_from_url(self, url: str, is_profile: bool = False) -> str:
-        """Extract filename from URL and add .jpg extension"""
+        """Extract a safe filename from URL and add .jpg extension."""
         if not url:
             return ""
 
@@ -90,17 +181,16 @@ class ImageHandler:
 
         # For profile pictures
         if is_profile:
-            # Extract unique identifier from profile URL
             parts = url.split('/')
             if len(parts) > 1:
                 filename = parts[-2] if parts[-1] == '' else parts[-1]
                 filename = filename.split('=')[0]
-                return f"{filename}.jpg"
+                return f"{_sanitize_filename(filename)}.jpg"
 
         # For review images
-        url = url.split('=')[0]
-        filename = url.split('/')[-1]
-        return f"{filename}.jpg"
+        base = url.split('=')[0]
+        filename = base.split('/')[-1]
+        return f"{_sanitize_filename(filename)}.jpg"
 
     def get_custom_url(self, filename: str, is_profile: bool = False) -> str:
         """Generate a custom URL for the image"""
@@ -136,12 +226,22 @@ class ImageHandler:
         if not self.is_not_custom_url(url):
             return url, url, "", ""
 
+        # SSRF guard — only download from known-good Google CDN hosts.
+        if not _is_allowed_image_host(url):
+            log.debug("Blocking non-allowlisted image host: %s", url)
+            return url, url, "", ""
+
         try:
             filename = self.get_filename_from_url(url, is_profile)
             if not filename:
                 return url, url, "", ""
 
             download_url = self._build_download_url(url)
+
+            # Verify the resolved download_url host is still allowlisted.
+            if not _is_allowed_image_host(download_url):
+                log.debug("Resolved download URL not allowlisted: %s", download_url)
+                return url, url, "", ""
 
             # Choose directory based on image type
             target_dir = self.profile_dir if is_profile else self.review_dir
@@ -153,6 +253,15 @@ class ImageHandler:
                 return url, download_url, filename, custom_url
 
             response = self._session.get(download_url, stream=True, timeout=10)
+
+            # 403 on geougc-cs tokens is common — token lifecycle / CDN
+            # restrictions. Log once per batch via the summary in
+            # download_all_images(); skip the per-URL error wall.
+            if response.status_code == 403:
+                self._forbidden_count += 1
+                log.debug("403 on %s (download URL: %s)", url, download_url)
+                return url, url, "", ""
+
             response.raise_for_status()
 
             with open(filepath, 'wb') as f:
@@ -162,6 +271,9 @@ class ImageHandler:
             custom_url = self.get_custom_url(filename, is_profile)
             return url, download_url, filename, custom_url
 
+        except requests.HTTPError as e:
+            log.warning("HTTP error downloading %s: %s", url, e)
+            return url, url, "", ""
         except Exception as e:
             log.error(f"Error downloading image from {url}: {e}")
             return url, url, "", ""
@@ -177,6 +289,8 @@ class ImageHandler:
             Updated reviews with local image paths and custom URLs
         """
         self.ensure_directories()
+        # Reset 403 counter for this batch (download_image bumps it on 403).
+        self._forbidden_count = 0
 
         # Collect all unique image URLs (both review images and profile pictures)
         # Exclude custom URLs
@@ -336,6 +450,18 @@ class ImageHandler:
                     review["profile_picture"] = url_to_download_url[profile_picture_original]
 
         log.info(f"Downloaded {len(url_to_filename)} images")
+        if self._forbidden_count > 0:
+            # Google's newer `geougc-cs/ABOP...` image tokens are signed URLs
+            # bound to a server-side session and cannot be fetched from outside
+            # the authenticated browser — even with forwarded cookies + headers,
+            # they return 403. The older `AMG...` tokens work fine. Skipping
+            # them is expected, not a bug.
+            log.info(
+                "Skipped %d image(s) with restricted-access tokens "
+                "(expected — Google signed URLs not fetchable outside the "
+                "browser session)",
+                self._forbidden_count,
+            )
         if self.use_s3 and s3_url_mapping:
             log.info(f"Uploaded {len(s3_url_mapping)} images to S3")
         if self.replace_urls:

@@ -71,15 +71,36 @@ async def lifespan(app: FastAPI):
 
     db_path = _config.get("db_path", "reviews.db")
 
-    # Initialize API key DB
+    # Initialize API key DB. On failure, the dependency `require_api_key`
+    # falls through to reject all requests — failing closed is safer than
+    # starting without auth.
     from modules.api_keys import ApiKeyDB
-    app.state.api_key_db = ApiKeyDB(db_path)
-    log.info("API key database initialized")
+    try:
+        app.state.api_key_db = ApiKeyDB(db_path)
+        log.info("API key database initialized")
+    except Exception:  # noqa: BLE001
+        log.exception("Failed to initialize API key database")
+        app.state.api_key_db = None
 
     # Initialize Review DB (read-only queries, safe with WAL mode)
     from modules.review_db import ReviewDB
-    app.state.review_db = ReviewDB(db_path)
-    log.info("Review database initialized")
+    try:
+        app.state.review_db = ReviewDB(db_path)
+        log.info("Review database initialized")
+    except Exception:  # noqa: BLE001
+        log.exception("Failed to initialize review database")
+        app.state.review_db = None
+
+    # Audit-log retention — daily prune on startup (best-effort).
+    try:
+        retention_days = int(_config.get("audit", {}).get("retention_days", 90))
+        if app.state.api_key_db and retention_days > 0:
+            pruned = app.state.api_key_db.prune_audit_log(retention_days)
+            if pruned:
+                log.info("Pruned %d audit log rows older than %d days",
+                         pruned, retention_days)
+    except Exception:  # noqa: BLE001
+        log.debug("Audit prune on startup failed", exc_info=True)
 
     # Start auto-cleanup task
     asyncio.create_task(cleanup_jobs_periodically())
@@ -88,10 +109,18 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     log.info("Shutting down Google Reviews Scraper API Server")
-    if hasattr(app.state, "review_db"):
-        app.state.review_db.close()
-    if hasattr(app.state, "api_key_db"):
-        app.state.api_key_db.close()
+    review_db = getattr(app.state, "review_db", None)
+    if review_db is not None:
+        try:
+            review_db.close()
+        except Exception:  # noqa: BLE001
+            log.debug("Error closing review_db", exc_info=True)
+    api_key_db = getattr(app.state, "api_key_db", None)
+    if api_key_db is not None:
+        try:
+            api_key_db.close()
+        except Exception:  # noqa: BLE001
+            log.debug("Error closing api_key_db", exc_info=True)
     if job_manager:
         job_manager.shutdown()
 
@@ -182,6 +211,34 @@ def get_api_key_db(request: Request):
 # ---------------------------------------------------------------------------
 
 # --- Jobs ---
+_GOOGLE_MAPS_HOSTS = (
+    "maps.google.com",
+    "www.google.com",
+    "google.com",
+    "maps.app.goo.gl",
+    "goo.gl",
+)
+
+
+def _is_google_maps_url(url: str) -> bool:
+    """Minimal allowlist check — prevents arbitrary URLs from being queued."""
+    from urllib.parse import urlparse
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:  # noqa: BLE001
+        return False
+    return host in _GOOGLE_MAPS_HOSTS or any(host.endswith("." + h) for h in _GOOGLE_MAPS_HOSTS)
+
+
+class DateFilterRequest(BaseModel):
+    """Optional date-range filter for scrape jobs (issue #19)."""
+    after: Optional[str] = Field(None, description="ISO date; include reviews on/after")
+    before: Optional[str] = Field(None, description="ISO date; include reviews on/before")
+    mode: Optional[str] = Field(None, description="post_filter (default) or early_stop")
+    on_unparseable_date: Optional[str] = Field(None, description="include (default) or exclude")
+    timezone: Optional[str] = Field(None, description="IANA timezone (default UTC)")
+
+
 class ScrapeRequest(BaseModel):
     """Request model for starting a scrape job"""
     url: HttpUrl = Field(..., description="Google Maps URL to scrape")
@@ -194,7 +251,12 @@ class ScrapeRequest(BaseModel):
     scroll_idle_limit: Optional[int] = Field(None, description="Max idle iterations with zero new cards")
     download_images: Optional[bool] = Field(None, description="Download images from reviews")
     use_s3: Optional[bool] = Field(None, description="Upload images to S3")
-    custom_params: Optional[Dict[str, Any]] = Field(None, description="Custom parameters to add to each document")
+    custom_params: Optional[Dict[str, Any]] = Field(
+        None, max_length=64, description="Custom parameters (max 64 keys)"
+    )
+    date_filter: Optional[DateFilterRequest] = Field(
+        None, description="Optional date-range filter (issue #19)"
+    )
 
 
 class JobResponse(BaseModel):
@@ -348,7 +410,68 @@ async def root():
     return {
         "message": "Google Reviews Scraper API is running",
         "status": "healthy",
-        "version": "1.2.1"
+        "version": "1.2.2"
+    }
+
+
+@system_router.get("/health/scrape", summary="Scraper Health Probe",
+                   dependencies=[Depends(require_api_key)])
+async def scrape_health(review_db=Depends(get_review_db)):
+    """
+    Scraper health signal derived from recent session telemetry.
+
+    Returns:
+        status: healthy | degraded | unhealthy | unknown
+        last_session_status: most recent completed session's status
+        empty_sessions_24h: number of sessions ending with zero reviews
+        degraded_sessions_24h: sessions >30% parse errors
+        last_synthetic_success: ISO ts of most recent non-empty completed session
+    """
+    try:
+        recent = review_db.backend.fetchall(
+            "SELECT status, completed_at, reviews_found "
+            "FROM scrape_sessions "
+            "WHERE completed_at IS NOT NULL "
+            "ORDER BY session_id DESC LIMIT 50"
+        )
+    except Exception:  # noqa: BLE001
+        return {"status": "unknown"}
+
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    last_status = recent[0]["status"] if recent else None
+    last_success = None
+    empty = 0
+    degraded = 0
+    for row in recent:
+        completed_at = row.get("completed_at") or ""
+        try:
+            ts = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+        except ValueError:
+            ts = None
+        if ts and ts < cutoff:
+            continue
+        if row["status"] == "empty":
+            empty += 1
+        if row["status"] == "degraded":
+            degraded += 1
+        if last_success is None and row["status"] == "completed" and (row.get("reviews_found") or 0) > 0:
+            last_success = completed_at
+
+    total = empty + degraded
+    if total == 0:
+        status = "healthy"
+    elif total < 3:
+        status = "degraded"
+    else:
+        status = "unhealthy"
+
+    return {
+        "status": status,
+        "last_session_status": last_status,
+        "empty_sessions_24h": empty,
+        "degraded_sessions_24h": degraded,
+        "last_synthetic_success": last_success,
     }
 
 
@@ -403,12 +526,23 @@ async def start_scrape(request: ScrapeRequest, background_tasks: BackgroundTasks
     if not job_manager:
         raise HTTPException(status_code=500, detail="Job manager not initialized")
 
+    # URL allowlist — only Google Maps domains accepted (roadmap 3.5).
+    url = str(request.url)
+    if not _is_google_maps_url(url):
+        raise HTTPException(status_code=400,
+                            detail="url must be a Google Maps or maps.app.goo.gl link")
+
     config_overrides = {}
     for field, value in request.dict().items():
-        if value is not None and field != "url":
-            config_overrides[field] = value
-
-    url = str(request.url)
+        if value is None or field == "url":
+            continue
+        if field == "date_filter":
+            # Strip None subfields so DateFilter's defaults apply.
+            df = {k: v for k, v in value.items() if v is not None}
+            if df:
+                config_overrides["date_filter"] = df
+            continue
+        config_overrides[field] = value
 
     try:
         job_id = job_manager.create_job(url, config_overrides)
@@ -421,9 +555,13 @@ async def start_scrape(request: ScrapeRequest, background_tasks: BackgroundTasks
             "message": f"Scraping job {'started' if started else 'queued'} successfully"
         }
 
-    except Exception as e:
-        log.error(f"Error creating scraping job: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to create scraping job: {str(e)}")
+    except Exception:
+        # Log full details server-side but do not leak internals to client.
+        log.exception("Error creating scraping job")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create scraping job (see server logs)",
+        )
 
 
 @jobs_router.get("/jobs/{job_id}", response_model=JobResponse, summary="Get Job Status")

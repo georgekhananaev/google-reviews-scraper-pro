@@ -85,23 +85,39 @@ class ApiKeyDB:
         return (row["id"], raw_key)
 
     def verify_key(self, raw_key: str) -> Optional[Dict[str, Any]]:
-        """Verify a raw API key. Returns key info dict or None."""
+        """
+        Verify a raw API key. Returns key info dict or None.
+
+        Constant-time comparison across all active keys (see F-AUTH.1) —
+        iterates every active key even after a match to avoid leaking
+        match-position timing information. Active-key count is small
+        (keys are admin-issued), so the O(n) cost is negligible.
+        """
         key_hash = _hash_key(raw_key)
-        row = self._db.fetchone(
-            "SELECT id, name, key_prefix, created_at, last_used_at, usage_count "
-            "FROM api_keys WHERE key_hash = ? AND is_active = 1",
-            (key_hash,),
+        rows = self._db.fetchall(
+            "SELECT id, name, key_hash, key_prefix, created_at, "
+            "last_used_at, usage_count FROM api_keys WHERE is_active = 1"
         )
-        if not row:
+
+        found: Optional[Dict[str, Any]] = None
+        for row in rows:
+            # Compare every hash — do not break early on match.
+            if secrets.compare_digest(row["key_hash"], key_hash):
+                found = row
+
+        if not found:
             return None
 
         self._db.execute(
             "UPDATE api_keys SET last_used_at = datetime('now'), "
             "usage_count = usage_count + 1 WHERE id = ?",
-            (row["id"],),
+            (found["id"],),
         )
         self._db.commit()
-        return dict(row)
+
+        result = dict(found)
+        result.pop("key_hash", None)
+        return result
 
     def list_keys(self) -> List[Dict[str, Any]]:
         """List all API keys (without hashes)."""

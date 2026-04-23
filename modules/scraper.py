@@ -13,7 +13,13 @@ import traceback
 from typing import Dict, Any, List
 
 from seleniumbase import Driver
-from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
+from selenium.common.exceptions import (
+    InvalidSessionIdException,
+    NoSuchWindowException,
+    StaleElementReferenceException,
+    TimeoutException,
+    WebDriverException,
+)
 from selenium.webdriver import Chrome
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
@@ -23,10 +29,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
 
+from modules.date_filter import DateFilter, EARLY_STOP_CONSECUTIVE
 from modules.models import RawReview
 from modules.pipeline import PostScrapeRunner
 from modules.review_db import ReviewDB
 from modules.place_id import extract_place_id
+from modules.selector_health import SelectorHealth
 
 # Logger
 log = logging.getLogger("scraper")
@@ -160,6 +168,72 @@ REVIEW_WORDS = {
     "отзиви", "ревюта", "мнения", "коментари", "оценки"
 }
 
+# Negative-signal keywords — tabs whose presence implies this is NOT the
+# reviews tab. Used to penalize false positives (Menu/Overview/Photos etc.
+# sometimes sit at data-tab-index="1" when Google reorders tabs).
+NON_REVIEW_TAB_WORDS = {
+    # English
+    "menu", "overview", "about", "photos", "updates", "products", "services",
+    "directions", "posts",
+    # French
+    "aperçu", "à propos", "photos", "produits",
+    # German
+    "übersicht", "speisekarte", "fotos", "produkte", "über",
+    # Spanish
+    "menú", "resumen", "fotos", "productos", "acerca",
+    # Portuguese
+    "menu", "visão geral", "fotos", "produtos", "sobre",
+    # Italian
+    "menu", "panoramica", "foto", "prodotti",
+    # Hebrew
+    "תפריט", "תמונות", "סקירה כללית", "מוצרים",
+    # Thai
+    "เมนู", "ภาพรวม", "รูปภาพ", "สินค้า",
+    # Russian
+    "меню", "обзор", "фото", "товары",
+    # Japanese
+    "メニュー", "概要", "写真", "商品",
+    # Korean
+    "메뉴", "개요", "사진", "상품",
+    # Chinese
+    "菜单", "菜單", "概览", "概覽", "照片", "产品", "產品",
+    # Arabic
+    "قائمة الطعام", "نظرة عامة", "صور", "منتجات",
+    # Turkish
+    "menü", "genel bakış", "fotoğraflar", "ürünler",
+    # Polish
+    "menu", "omówienie", "zdjęcia", "produkty",
+    # Dutch
+    "menukaart", "overzicht", "foto's", "producten",
+    # Vietnamese
+    "thực đơn", "tổng quan", "ảnh", "sản phẩm",
+}
+
+
+def _text_contains_any(text: str, words: set) -> bool:
+    """Return True if any word in `words` appears in lowercased `text`."""
+    if not text:
+        return False
+    low = text.lower()
+    return any(w in low for w in words)
+
+
+class _DriverSessionLost(Exception):
+    """
+    Internal signal that the Chrome/WebDriver session has died mid-scrape
+    (issue #20 — `InvalidSessionIdException`). Caught by the retry wrapper;
+    triggers partial-session flush + fresh-driver retry.
+    """
+    pass
+
+
+class _RateLimited(Exception):
+    """
+    Internal signal that Google served a CAPTCHA / 429 / limited-view page.
+    Caught by the retry wrapper; triggers cooldown + partial status.
+    """
+    pass
+
 
 class GoogleReviewsScraper:
     """Main scraper class for Google Maps reviews"""
@@ -172,6 +246,12 @@ class GoogleReviewsScraper:
         self.cancel_event = cancel_event or threading.Event()
         db_path = config.get("db_path", "reviews.db")
         self.review_db = ReviewDB(db_path)
+        self._selector_health: SelectorHealth | None = None
+
+    def _record_selector(self, selector: str, outcome: str) -> None:
+        """Telemetry helper — always safe to call."""
+        if self._selector_health is not None:
+            self._selector_health.record(selector, outcome)
 
     @staticmethod
     def _db_review_to_legacy(db_review: Dict[str, Any]) -> Dict[str, Any]:
@@ -180,6 +260,9 @@ class GoogleReviewsScraper:
         description = text if isinstance(text, dict) else {}
         images = db_review.get("user_images", [])
         owner = db_review.get("owner_responses", {})
+        sub_ratings = db_review.get("sub_ratings") or {}
+        if not isinstance(sub_ratings, dict):
+            sub_ratings = {}
         return {
             "review_id": db_review.get("review_id", ""),
             "place_id": db_review.get("place_id", ""),
@@ -191,6 +274,7 @@ class GoogleReviewsScraper:
             "author_profile_url": db_review.get("profile_url", ""),
             "profile_picture": db_review.get("profile_picture", ""),
             "owner_responses": owner if isinstance(owner, dict) else {},
+            "sub_ratings": sub_ratings,
             "created_date": db_review.get("created_date", ""),
             "review_date": db_review.get("review_date", ""),
             "last_modified_date": db_review.get("last_modified", ""),
@@ -424,84 +508,132 @@ class GoogleReviewsScraper:
         time.sleep(3)
         self.dismiss_cookies(driver)
 
-        # Check if limited view is active
-        try:
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-            if "limited view" in body_text.lower():
-                log.warning("Google Maps is showing 'limited view' - reviews may not be available")
-        except Exception:
-            pass
+        # Check if limited view is active. Multilingual check + structural
+        # signal (presence of a Sign-in prompt) makes this robust for the
+        # French/German/non-English cases reported in issue #15.
+        if self._is_limited_view(driver):
+            log.warning(
+                "Google Maps is showing a limited view — reviews may be unavailable"
+            )
 
         return True
 
-    def is_reviews_tab(self, tab: WebElement) -> bool:
-        """
-        Dynamically detect if an element is the reviews tab across multiple languages and layouts.
-        Uses multiple detection approaches for maximum reliability.
-        """
+    # Localized "limited view" strings. Not exhaustive — the structural
+    # sign-in detection in _is_limited_view() is the primary signal.
+    _LIMITED_VIEW_STRINGS = (
+        "limited view",
+        "vue limitée",                  # French
+        "eingeschränkte ansicht",       # German
+        "vista limitada",               # Spanish / Portuguese
+        "vista limitata",               # Italian
+        "תצוגה מוגבלת",                 # Hebrew
+        "มุมมองที่จำกัด",                # Thai
+        "ограниченный просмотр",        # Russian
+        "限定ビュー",                    # Japanese
+        "제한된 보기",                   # Korean
+        "受限视图", "受限檢視",           # Chinese
+        "عرض محدود",                     # Arabic
+        "sınırlı görünüm",              # Turkish
+        "ograniczony widok",            # Polish
+        "beperkte weergave",            # Dutch
+    )
+
+    def _is_limited_view(self, driver: Chrome) -> bool:
+        """Detect limited-view restriction across languages + structure."""
         try:
-            # Strategy 1: Data attribute detection (most reliable across languages)
-            tab_index = tab.get_attribute("data-tab-index")
-            if tab_index == "1" or tab_index == "reviews":
-                return True
-
-            # Strategy 2: Role and aria attributes (accessibility detection)
-            role = tab.get_attribute("role")
-            aria_selected = tab.get_attribute("aria-selected")
-            aria_label = (tab.get_attribute("aria-label") or "").lower()
-
-            # Many review tabs have role="tab" and data attributes
-            if role == "tab" and any(word in aria_label for word in REVIEW_WORDS):
-                return True
-
-            # Strategy 3: Text content detection (multiple sources)
-            sources = [
-                tab.text.lower() if tab.text else "",  # Direct text
-                aria_label,  # ARIA label
-                tab.get_attribute("innerHTML").lower() or "",  # Inner HTML
-                tab.get_attribute("textContent").lower() or ""  # Text content
-            ]
-
-            # Check all sources against our comprehensive keyword list
-            for source in sources:
-                if any(word in source for word in REVIEW_WORDS):
-                    return True
-
-            # Strategy 4: Nested element detection
-            try:
-                # Check text in all child elements
-                for child in tab.find_elements(By.CSS_SELECTOR, "*"):
-                    try:
-                        child_text = child.text.lower() if child.text else ""
-                        child_content = child.get_attribute("textContent").lower() or ""
-
-                        if any(word in child_text for word in REVIEW_WORDS) or any(
-                                word in child_content for word in REVIEW_WORDS):
-                            return True
-                    except:
-                        continue
-            except:
-                pass
-
-            # Strategy 5: URL detection (some tabs have hrefs or data-hrefs with tell-tale values)
-            for attr in ["href", "data-href", "data-url", "data-target"]:
-                attr_value = (tab.get_attribute(attr) or "").lower()
-                if attr_value and ("review" in attr_value or "rating" in attr_value):
-                    return True
-
-            # Strategy 6: Class detection (some review tabs have specific classes)
-            tab_class = tab.get_attribute("class") or ""
-            review_classes = ["review", "reviews", "rating", "ratings", "comments", "feedback", "g4jrve"]
-            if any(cls in tab_class for cls in review_classes):
-                return True
-
+            body_text = (
+                driver.find_element(By.TAG_NAME, "body").text or ""
+            ).lower()
+        except Exception:  # noqa: BLE001
             return False
 
+        for phrase in self._LIMITED_VIEW_STRINGS:
+            if phrase in body_text:
+                return True
+
+        # Structural: the sign-in prompt is shown on limited-view pages.
+        # If it's visible AND review tab selectors are absent, we treat it
+        # as limited-view regardless of the exact locale.
+        try:
+            sign_in_visible = bool(driver.find_elements(
+                By.CSS_SELECTOR,
+                'a[data-action="sign in"], a[href*="ServiceLogin"]',
+            ))
+            tab_present = bool(driver.find_elements(
+                By.CSS_SELECTOR, '[role="tab"]'
+            ))
+            if sign_in_visible and not tab_present:
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    # Minimum score needed to accept a tab as the Reviews tab.
+    # Tuned so that aria-label match (1.5) alone clears the bar, but
+    # data-tab-index="1" alone (no keyword match, or with a menu-like label)
+    # does not. Configurable via config.yaml adaptive.tab_detection_threshold.
+    TAB_DETECTION_THRESHOLD = 1.5
+
+    def is_reviews_tab(self, tab: WebElement) -> bool:
+        """
+        Score `tab` against multiple signals and accept only if the total
+        score ≥ threshold.
+
+        Fixes the long-standing bug where `data-tab-index="1"` alone caused
+        the Menu tab to be accepted on places that have both Menu and Reviews
+        (issues #21, #17, #15).
+        """
+        try:
+            score = self._score_reviews_tab(tab)
+            threshold = self.config.get("adaptive", {}).get(
+                "tab_detection_threshold", self.TAB_DETECTION_THRESHOLD
+            )
+            return score >= threshold
         except StaleElementReferenceException:
             return False
         except Exception as e:
-            log.debug(f"Error in is_reviews_tab: {e}")
+            log.debug(f"is_reviews_tab error: {e}")
             return False
+
+    def _score_reviews_tab(self, tab: WebElement) -> float:
+        """Weighted scoring for tab-is-reviews detection."""
+        aria_label = (tab.get_attribute("aria-label") or "").lower()
+        tab_text = (tab.text or "").lower()
+        tab_index = tab.get_attribute("data-tab-index") or ""
+
+        score = 0.0
+
+        # Strongest signals — explicit semantic match.
+        if _text_contains_any(aria_label, REVIEW_WORDS):
+            score += 1.5
+        if _text_contains_any(tab_text, REVIEW_WORDS):
+            score += 1.0
+
+        # Penalize non-review labels — prevents Menu/Overview misclassification
+        # when they happen to sit at data-tab-index="1".
+        if _text_contains_any(aria_label, NON_REVIEW_TAB_WORDS):
+            score -= 1.5
+        if _text_contains_any(tab_text, NON_REVIEW_TAB_WORDS):
+            score -= 1.0
+
+        # Weak positive: index + keyword already scored above; bare index
+        # without any keyword is no longer sufficient.
+        if tab_index in ("1", "reviews") and score > 0:
+            score += 0.25
+
+        # URL-ish attributes — strong signal, matches aria-label weight.
+        for attr in ("href", "data-href", "data-url", "data-target"):
+            val = (tab.get_attribute(attr) or "").lower()
+            if val and ("review" in val or "rating" in val):
+                score += 1.5
+                break
+
+        # Class-name hint (weakest — Google reuses class names across tabs).
+        tab_class = (tab.get_attribute("class") or "").lower()
+        if any(c in tab_class for c in ("review", "rating", "g4jrve")):
+            score += 0.5
+
+        return score
 
     def click_reviews_tab(self, driver: Chrome):
         """
@@ -512,24 +644,37 @@ class GoogleReviewsScraper:
         end_time = time.time() + max_timeout
         attempts = 0
 
-        # Define different selectors to try in order of reliability
+        # Selector order matters — highest-specificity first.
+        # NOTE: `[data-tab-index="1"]` is deliberately NOT first (see #21).
+        # Scoring in is_reviews_tab() would still reject Menu, but putting
+        # semantically targeted selectors first avoids scanning the wrong
+        # element set at all.
         tab_selectors = [
-            # Direct tab selectors
-            '[data-tab-index="1"]',  # Most common tab index
-            '[role="tab"][data-tab-index]',  # Any tab with index
-            'button[role="tab"]',  # Button tabs
-            'div[role="tab"]',  # Div tabs
-            'a[role="tab"]',  # Link tabs
+            # Strongest: explicit aria-label match, any language.
+            '[role="tab"][aria-label*="review" i]',
+            '[role="tab"][aria-label*="avis" i]',
+            '[role="tab"][aria-label*="bewertung" i]',
+            '[role="tab"][aria-label*="reseña" i]',
+            '[role="tab"][aria-label*="recensione" i]',
+            '[role="tab"][aria-label*="ביקורת"]',
+            '[role="tab"][aria-label*="リビュー"]',
+            '[role="tab"][aria-label*="рецензии"]',
 
-            # Common Google Maps review tab selectors
-            '.fontTitleSmall[role="tab"]',  # Google Maps title font tabs
-            '.hh2c6[role="tab"]',  # Common Google Maps class
-            '.m6QErb [role="tab"]',  # Maps container tabs
+            # Any tab in the tablist — scoring filters them.
+            '[role="tab"][data-tab-index]',
+            'button[role="tab"]',
+            'div[role="tab"]',
+            'a[role="tab"]',
 
-            # Text-based selectors for various languages
-            'button:contains("reviews")',  # Button containing "reviews"
-            'div[role="tablist"] > *',  # Any tab in a tab list
-            'div.m6QErb div[role="tablist"] > *',  # Google Maps specific tablist
+            # Google Maps-specific class patterns (legacy fallback).
+            '.fontTitleSmall[role="tab"]',
+            '.hh2c6[role="tab"]',
+            '.m6QErb [role="tab"]',
+            'div[role="tablist"] > *',
+            'div.m6QErb div[role="tablist"] > *',
+
+            # Absolute last resort — index-based. Scoring still applies.
+            '[data-tab-index="1"]',
         ]
 
         # Record successful clicks for debugging
@@ -544,7 +689,9 @@ class GoogleReviewsScraper:
             try:
                 elements = driver.find_elements(By.CSS_SELECTOR, selector)
                 if not elements:
+                    self._record_selector(selector, "miss")
                     continue
+                self._record_selector(selector, "hit")
 
                 # Try each element found with this selector
                 for element in elements:
@@ -620,9 +767,9 @@ class GoogleReviewsScraper:
                             if self.verify_reviews_tab_clicked(driver):
                                 log.info(f"Successfully clicked element with keyword '{language_keyword}'")
                                 return True
-                        except:
+                        except Exception:
                             continue
-                except:
+                except Exception:
                     continue
 
         # Final attempt: try to navigate directly to reviews by URL
@@ -805,7 +952,7 @@ class GoogleReviewsScraper:
                                     sort_button = button
                                     log.info("Found sort button through container element")
                                     break
-                        except:
+                        except Exception:
                             continue
                         if sort_button:
                             break
@@ -825,11 +972,11 @@ class GoogleReviewsScraper:
                                     sort_button = element
                                     log.info(f"Found sort button with XPath term: '{term}'")
                                     break
-                            except:
+                            except Exception:
                                 continue
                         if sort_button:
                             break
-                    except:
+                    except Exception:
                         continue
             
             # Final fallback: look for any button in the reviews area that might open a dropdown
@@ -849,11 +996,11 @@ class GoogleReviewsScraper:
                                         sort_button = button
                                         log.info("Found potential sort button via fallback dropdown detection")
                                         break
-                                except:
+                                except Exception:
                                     continue
                             if sort_button:
                                 break
-                        except:
+                        except Exception:
                             continue
                 except Exception as e:
                     log.debug(f"Error in fallback sort button detection: {e}")
@@ -919,7 +1066,7 @@ class GoogleReviewsScraper:
                 # Try to reset state by clicking elsewhere
                 try:
                     ActionChains(driver).move_by_offset(50, 50).click().perform()
-                except:
+                except Exception:
                     pass
                 return False
 
@@ -969,7 +1116,7 @@ class GoogleReviewsScraper:
                                     # Fall back to the item's own text
                                     text = item.text.strip()
                                     visible_items.append((item, text))
-                            except:
+                            except Exception:
                                 # Last resort - use the item's own text
                                 text = item.text.strip()
                                 visible_items.append((item, text))
@@ -983,7 +1130,7 @@ class GoogleReviewsScraper:
                                 )
                                 if parent:
                                     visible_items.append((parent, text))
-                            except:
+                            except Exception:
                                 continue
                         else:
                             # Generic menu item handling
@@ -1101,7 +1248,7 @@ class GoogleReviewsScraper:
                 # If we get here, we failed - try to close the menu by clicking elsewhere
                 try:
                     ActionChains(driver).move_by_offset(50, 50).click().perform()
-                except:
+                except Exception:
                     pass
 
                 return False
@@ -1138,7 +1285,7 @@ class GoogleReviewsScraper:
                     try:
                         if element.is_displayed():
                             return True
-                    except:
+                    except Exception:
                         continue
 
             # 2. Check for generic menu containers
@@ -1154,7 +1301,7 @@ class GoogleReviewsScraper:
                     try:
                         if element.is_displayed():
                             return True
-                    except:
+                    except Exception:
                         continue
 
             # 3. Look for menu items
@@ -1175,7 +1322,7 @@ class GoogleReviewsScraper:
                             visible_items += 1
                             if visible_items >= 2:  # At least 2 menu items should be visible
                                 return True
-                    except:
+                    except Exception:
                         continue
 
             # 4. Advanced detection with JavaScript
@@ -1235,7 +1382,7 @@ class GoogleReviewsScraper:
                 position_detected = driver.execute_script(position_check)
                 if position_detected:
                     return True
-            except:
+            except Exception:
                 pass
 
             return False
@@ -1245,7 +1392,50 @@ class GoogleReviewsScraper:
             return False
 
     def scrape(self):
-        """Main scraper method"""
+        """
+        Public scrape entry point.
+
+        Wraps `_scrape_once()` with retry-on-session-death (issue #20).
+        On `_DriverSessionLost`, already-captured reviews are preserved in
+        SQLite (upsert is idempotent by `(review_id, place_id)`), the session
+        is marked `partial`, and a fresh driver is launched to retry.
+        """
+        resilience = self.config.get("resilience", {}) or {}
+        max_retries = int(resilience.get("retry_on_session_death", 1))
+        backoff_base = int(resilience.get("retry_backoff_base_seconds", 3))
+
+        for attempt in range(max_retries + 1):
+            try:
+                return self._scrape_once()
+            except _DriverSessionLost as e:
+                if attempt >= max_retries:
+                    log.error(
+                        "Driver session lost, retries exhausted (%d): %s",
+                        max_retries, e,
+                    )
+                    return False
+                delay = backoff_base * (3 ** attempt)
+                log.warning(
+                    "Driver session lost (attempt %d/%d) — retrying in %ds: %s",
+                    attempt + 1, max_retries + 1, delay, e,
+                )
+                time.sleep(delay)
+            except _RateLimited as e:
+                cooldown = int(resilience.get("rate_limit_cooldown_seconds", 60))
+                log.warning(
+                    "Rate-limit signal detected: %s. Sleeping %ds then aborting "
+                    "this scrape (safe to retry later).",
+                    e, cooldown,
+                )
+                time.sleep(cooldown)
+                return False
+            except InterruptedError:
+                log.info("Scrape cancelled — not retrying")
+                return False
+        return False
+
+    def _scrape_once(self):
+        """Single scrape attempt — may raise _DriverSessionLost for retry."""
         start_time = time.time()
 
         url = self.config.get("url")
@@ -1255,6 +1445,10 @@ class GoogleReviewsScraper:
         max_reviews = self.config.get("max_reviews", 0)
         max_scroll_attempts = self.config.get("max_scroll_attempts", 50)
         scroll_idle_limit = self.config.get("scroll_idle_limit", 15)
+
+        # Date filter — early_stop mode requires sort_by=newest (enforced later).
+        date_filter = DateFilter(self.config)
+        past_boundary_streak = 0
 
         log.info(f"Starting scraper with settings: headless={headless}, sort_by={sort_by}")
         log.info(f"URL: {url}")
@@ -1289,6 +1483,7 @@ class GoogleReviewsScraper:
             )
             session_id = self.review_db.start_session(place_id, sort_by)
             log.info(f"Registered place: {place_id} ({place_name})")
+            self._selector_health = SelectorHealth(self.review_db.backend, session_id)
 
             # Load seen IDs from DB (empty for full mode to re-process everything)
             if self.scrape_mode == "full":
@@ -1307,7 +1502,7 @@ class GoogleReviewsScraper:
             try:
                 wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
                 log.info("Page DOM is ready")
-            except:
+            except Exception:
                 log.debug("Could not verify page ready state")
 
             # Verify we're on a reviews page before proceeding
@@ -1393,6 +1588,14 @@ class GoogleReviewsScraper:
                     log.info("Scrape cancelled by user request")
                     raise InterruptedError("Scrape cancelled")
 
+                # Driver session probe — detects Chrome crashes before the
+                # next find_elements() raises a cryptic error (issue #20).
+                try:
+                    driver.execute_script("return 1")
+                except (InvalidSessionIdException, NoSuchWindowException,
+                        WebDriverException) as probe_err:
+                    raise _DriverSessionLost(str(probe_err)) from probe_err
+
                 try:
                     cards = pane.find_elements(By.CSS_SELECTOR, CARD_SEL)
                     fresh_cards: List[WebElement] = []
@@ -1443,13 +1646,19 @@ class GoogleReviewsScraper:
                         except StaleElementReferenceException:
                             continue
                         except Exception:
-                            log.warning("parse error - storing stub\n%s",
-                                        traceback.format_exc(limit=1).strip())
-                            try:
-                                raw_id = card.get_attribute("data-review-id") or ""
-                                raw = RawReview(id=raw_id, text="", lang="und")
-                            except StaleElementReferenceException:
-                                continue
+                            # Skip the card — do not store empty stubs.
+                            # Earlier behavior stored a zero-rating placeholder,
+                            # which polluted content hashes and downstream data.
+                            batch_stats["parse_errors"] = batch_stats.get("parse_errors", 0) + 1
+                            log.warning(
+                                "parse error - skipping card\n%s",
+                                traceback.format_exc(limit=1).strip(),
+                            )
+                            continue
+
+                        if not raw.id:
+                            batch_stats["parse_errors"] = batch_stats.get("parse_errors", 0) + 1
+                            continue
 
                         review_dict = {
                             "review_id": raw.id,
@@ -1464,6 +1673,7 @@ class GoogleReviewsScraper:
                             "avatar": raw.avatar,
                             "owner_text": raw.owner_text,
                             "photos": raw.photos,
+                            "sub_ratings": raw.sub_ratings,
                         }
                         result = self.review_db.upsert_review(
                             place_id, review_dict, session_id,
@@ -1483,6 +1693,23 @@ class GoogleReviewsScraper:
                             log.info("Reached max_reviews limit (%d), stopping.", max_reviews)
                             idle = 999
                             break
+
+                        # Date-filter early-stop (issue #19). Only meaningful
+                        # when sort_by is newest AND the user asked for
+                        # mode=early_stop with an `after` boundary.
+                        if date_filter.early_stop_enabled and sort_by == "newest":
+                            if date_filter.is_past_boundary(raw.review_date):
+                                past_boundary_streak += 1
+                                if past_boundary_streak >= EARLY_STOP_CONSECUTIVE:
+                                    log.info(
+                                        "Date-filter early stop: %d consecutive "
+                                        "cards older than %s — ending scrape",
+                                        past_boundary_streak, date_filter.raw_after,
+                                    )
+                                    idle = 999
+                                    break
+                            else:
+                                past_boundary_streak = 0
 
                     # Batch-level stop: entire scroll iteration was unchanged.
                     # Require min 3 reviews in the batch to avoid false stops
@@ -1533,13 +1760,13 @@ class GoogleReviewsScraper:
                                 try:
                                     driver.execute_script("arguments[0].lastElementChild.scrollIntoView();", pane)
                                     time.sleep(2)
-                                except:
+                                except Exception:
                                     pass
                                 scroll_stuck_count = 0
                         else:
                             scroll_stuck_count = 0
                             last_scroll_position = current_scroll
-                    except:
+                    except Exception:
                         pass
 
                     # Use JavaScript for smoother scrolling
@@ -1577,10 +1804,20 @@ class GoogleReviewsScraper:
 
             # End session with stats
             total_found = sum(batch_stats.values())
+            parse_errors = batch_stats.get("parse_errors", 0)
+            real_found = total_found - parse_errors
             if session_id:
+                # Session status: "empty" if zero reviews extracted,
+                # "degraded" if >30% of cards failed parsing, else "completed".
+                if real_found == 0:
+                    session_status = "empty"
+                elif total_found and (parse_errors / total_found) > 0.30:
+                    session_status = "degraded"
+                else:
+                    session_status = "completed"
                 self.review_db.end_session(
-                    session_id, "completed",
-                    reviews_found=total_found,
+                    session_id, session_status,
+                    reviews_found=real_found,
                     reviews_new=batch_stats.get("new", 0),
                     reviews_updated=(
                         batch_stats.get("updated", 0)
@@ -1588,23 +1825,47 @@ class GoogleReviewsScraper:
                     ),
                 )
 
-            # Post-scrape pipeline: process once, write to all targets
+            # Post-scrape pipeline: process once, write to all targets.
+            # Capture browser cookies BEFORE quitting the driver — the image
+            # downloader needs them to fetch newer geougc-cs/ABOP... URLs
+            # (older AMG... URLs work without cookies). See image_handler.
+            browser_cookies = []
+            try:
+                browser_cookies = driver.get_cookies()
+            except Exception:  # noqa: BLE001
+                log.debug("Could not extract browser cookies", exc_info=True)
+
             reviews = self.review_db.get_reviews(place_id) if place_id else []
             if reviews:
                 legacy_docs = {
                     r["review_id"]: self._db_review_to_legacy(r) for r in reviews
                 }
                 runner = PostScrapeRunner(self.config)
+                if browser_cookies:
+                    runner.set_browser_cookies(browser_cookies)
+                # Scope image/S3/MongoDB tasks to reviews that actually
+                # changed this session — avoids repeatedly re-downloading
+                # images and re-syncing identical documents. Unchanged
+                # reviews already have their images + Mongo docs in place.
+                runner.set_changed_ids(changed_ids)
                 try:
                     runner.run(legacy_docs, place_id, seen=seen)
                 finally:
                     runner.close()
+
+            if self._selector_health is not None:
+                self._selector_health.flush()
 
             log.info(
                 "Finished - new: %d, updated: %d, restored: %d, unchanged: %d",
                 batch_stats["new"], batch_stats["updated"],
                 batch_stats["restored"], batch_stats["unchanged"],
             )
+            if batch_stats.get("parse_errors"):
+                log.warning(
+                    "Parse errors: %d cards skipped due to parser exceptions",
+                    batch_stats["parse_errors"],
+                )
             log.info("Total unique reviews in DB: %d", len(reviews))
 
             end_time = time.time()
@@ -1613,9 +1874,52 @@ class GoogleReviewsScraper:
 
             return True
 
+        except _DriverSessionLost:
+            # Flush partial session data — upsert is idempotent so the
+            # retry attempt will continue where this one left off.
+            if session_id:
+                try:
+                    self.review_db.end_session(
+                        session_id, "partial", error="driver session lost",
+                    )
+                except Exception:  # noqa: BLE001
+                    log.debug("Failed to end session on driver loss", exc_info=True)
+            if self._selector_health is not None:
+                try:
+                    self._selector_health.flush()
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
+
+        except _RateLimited as e:
+            if session_id:
+                try:
+                    self.review_db.end_session(
+                        session_id, "rate_limited", error=str(e),
+                    )
+                except Exception:  # noqa: BLE001
+                    log.debug("Failed to end session on rate limit", exc_info=True)
+            if self._selector_health is not None:
+                try:
+                    self._selector_health.flush()
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
+
+        except InterruptedError:
+            if session_id:
+                try:
+                    self.review_db.end_session(session_id, "cancelled")
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
+
         except Exception as e:
             if session_id:
-                self.review_db.end_session(session_id, "failed", error=str(e))
+                try:
+                    self.review_db.end_session(session_id, "failed", error=str(e))
+                except Exception:  # noqa: BLE001
+                    pass
             log.error(f"Error during scraping: {e}")
             log.error(traceback.format_exc())
             return False

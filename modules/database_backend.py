@@ -6,6 +6,7 @@ Future PostgreSQL/MySQL backends implement the same protocol.
 """
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from typing import Protocol, Dict, Any, Optional, List
 
@@ -52,9 +53,18 @@ class SQLiteBackend:
     def __init__(self, db_path: str = "reviews.db"):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
+        # Serializes writes across FastAPI's request threadpool. WAL mode
+        # already permits concurrent reads; only writers need the lock.
+        # See F-API.4: without this, a single shared backend across threads
+        # would raise sqlite3.ProgrammingError at the first concurrent hit.
+        self._write_lock = threading.RLock()
 
     def connect(self) -> None:
-        self.conn = sqlite3.connect(self.db_path, timeout=30.0)
+        # check_same_thread=False lets us share a single connection across
+        # request threads. The _write_lock ensures writers don't collide.
+        self.conn = sqlite3.connect(
+            self.db_path, timeout=30.0, check_same_thread=False
+        )
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=30000")
         self.conn.execute("PRAGMA foreign_keys=ON")
@@ -62,6 +72,11 @@ class SQLiteBackend:
 
     def close(self) -> None:
         if self.conn:
+            try:
+                # Truncate WAL on close to prevent unbounded growth.
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                pass
             self.conn.close()
             self.conn = None
 
@@ -71,22 +86,32 @@ class SQLiteBackend:
         return self.conn  # type: ignore[return-value]
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
-        return self._ensure_connected().execute(sql, params)
+        with self._write_lock:
+            return self._ensure_connected().execute(sql, params)
 
     def executemany(self, sql: str, params_list: List[tuple]) -> sqlite3.Cursor:
-        return self._ensure_connected().executemany(sql, params_list)
+        with self._write_lock:
+            return self._ensure_connected().executemany(sql, params_list)
 
     def fetchone(self, sql: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
-        cursor = self.execute(sql, params)
-        row = cursor.fetchone()
+        with self._write_lock:
+            cursor = self._ensure_connected().execute(sql, params)
+            row = cursor.fetchone()
         return dict(row) if row else None
 
     def fetchall(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
-        cursor = self.execute(sql, params)
-        return [dict(r) for r in cursor.fetchall()]
+        with self._write_lock:
+            cursor = self._ensure_connected().execute(sql, params)
+            rows = cursor.fetchall()
+        return [dict(r) for r in rows]
 
     def begin_write(self) -> None:
-        self._ensure_connected().execute("BEGIN IMMEDIATE")
+        self._write_lock.acquire()
+        try:
+            self._ensure_connected().execute("BEGIN IMMEDIATE")
+        except Exception:
+            self._write_lock.release()
+            raise
 
     def commit(self) -> None:
         self._ensure_connected().commit()
@@ -98,12 +123,21 @@ class SQLiteBackend:
     def transaction(self):
         """Context manager for write transactions with auto-commit/rollback."""
         self.begin_write()
+        committed = False
         try:
             yield self
             self.commit()
-        except Exception:
-            self.rollback()
-            raise
+            committed = True
+        finally:
+            if not committed:
+                try:
+                    self.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                self._write_lock.release()
+            except RuntimeError:
+                pass
 
     def table_exists(self, name: str) -> bool:
         row = self.fetchone(
