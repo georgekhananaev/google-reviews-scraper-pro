@@ -7,25 +7,51 @@ Girdi:
 Çıktı:
     data/dealers_scored.json     — bayi başına yorum analizi
     Konsol özet tablosu.
+
+CWD'ye karşı dayanıklı: config + db'yi (1) CWD, (2) parent, (3) parent.parent
+sırasıyla arar. Yani hem denemer\\ hem scraper-repo\\ içinden çalışabilir.
 """
 
+import argparse
+import hashlib
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 from keywords import BATTERY, OTHER_BUSINESS, contains_any  # noqa: E402
 
-# Repo modülü — URL eşlemesi için
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from modules.place_id import canonicalize_url  # noqa: E402
-
-ROOT = Path(__file__).parent.parent
-CONFIG_PATH = ROOT / "inci_aku_config.yaml"
+CONFIG_NAME = "inci_aku_config.yaml"
+DEFAULT_DB_NAME = "inci_aku_reviews.db"
 OUT_PATH = Path(__file__).parent / "data" / "dealers_scored.json"
+
+
+# ---------------------------------------------------------------------------
+# Inline URL canonicalization (repo'nun modules/place_id.py'sinin küçük kopyası)
+# ---------------------------------------------------------------------------
+
+_TRACKING_PARAMS = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "fbclid", "gclid", "dclid", "msclkid", "twclid",
+    "igshid", "mc_cid", "mc_eid", "ref", "source",
+})
+
+
+def canonicalize_url(url):
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    netloc = parsed.netloc.lower()
+    path = parsed.path.rstrip("/") or "/"
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    filtered = {k: v for k, v in params.items() if k.lower() not in _TRACKING_PARAMS}
+    sorted_query = urlencode(sorted(filtered.items()), doseq=True) if filtered else ""
+    return urlunparse((parsed.scheme, netloc, path, parsed.params, sorted_query, ""))
 
 # Akü-bayisi heuristic eşikleri
 PURE_BATTERY_BAT_RATIO = 0.30
@@ -161,16 +187,45 @@ def print_summary(scored):
     print("=" * 132)
 
 
+def _find(name, override=None):
+    """Bir dosyayı sırayla CWD → parent → parent.parent → script-dir-parent
+    içinde ara. Bulamazsa None."""
+    if override:
+        p = Path(override)
+        return p if p.exists() else None
+    candidates = [
+        Path.cwd() / name,
+        Path.cwd().parent / name,
+        Path.cwd().parent.parent / name,
+        Path(__file__).parent.parent / name,
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
 def main():
-    if not CONFIG_PATH.exists():
-        print(f"HATA: {CONFIG_PATH} yok. Önce 3_gen_config.py.", file=sys.stderr)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", help=f"Default: {CONFIG_NAME} (otomatik aranır)")
+    ap.add_argument("--db", help="Default: config içindeki db_path (otomatik aranır)")
+    args = ap.parse_args()
+
+    config_path = _find(CONFIG_NAME, args.config)
+    if not config_path:
+        print(f"HATA: {CONFIG_NAME} bulunamadı (CWD, parent, parent.parent denendi). "
+              f"Önce 3_gen_config.py çalıştır.", file=sys.stderr)
         sys.exit(1)
-    config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
-    db_path = ROOT / config.get("db_path", "reviews.db")
-    if not db_path.exists():
-        print(f"HATA: {db_path} yok. Önce python start.py scrape --config "
-              f"{CONFIG_PATH.name} çalıştır.", file=sys.stderr)
+    print(f"[config] {config_path}")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    db_name = config.get("db_path", DEFAULT_DB_NAME)
+    db_path = _find(db_name, args.db)
+    if not db_path:
+        print(f"HATA: {db_name} bulunamadı (CWD, parent, parent.parent denendi). "
+              f"Önce python start.py scrape --config {config_path.name} çalıştır.",
+              file=sys.stderr)
         sys.exit(1)
+    print(f"[db]     {db_path}")
 
     conn = sqlite3.connect(str(db_path))
     scored = []
