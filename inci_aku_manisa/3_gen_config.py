@@ -51,39 +51,54 @@ def load_auto():
     return json.loads(AUTO_PATH.read_text(encoding="utf-8"))
 
 
+def _read_csv_text(path):
+    """Excel'in kaydedebileceği farklı encoding'leri sırayla dene.
+    utf-8-sig → utf-8 → cp1254 (Türkçe Windows ANSI) → cp1252 → latin-1.
+    latin-1 her byte'ı kabul ettiği için son fallback olarak çalışır.
+    """
+    for enc in ("utf-8-sig", "utf-8", "cp1254", "cp1252", "latin-1"):
+        try:
+            return path.read_text(encoding=enc), enc
+        except UnicodeDecodeError:
+            continue
+    return path.read_text(encoding="latin-1", errors="replace"), "latin-1+replace"
+
+
 def load_manual_approved():
     """manual_review.csv'den approved=Y olanları al.
     override_url doluysa onu kullan, yoksa google_url.
 
-    Excel TR locale CSV'yi noktalı virgül ile kaydedebildiği için
-    delimiter auto-detect ediyoruz (Sniffer , ve ;'ye bakar).
+    Excel TR locale CSV'yi noktalı virgül + cp1254 ile kaydedebildiği
+    için delimiter'ı ve encoding'i auto-detect ediyoruz.
     """
     if not MANUAL_CSV_PATH.exists():
         return []
     out = []
-    with MANUAL_CSV_PATH.open(encoding="utf-8") as f:
-        sample = f.read(4096)
-        f.seek(0)
-        try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
-        except csv.Error:
-            dialect = csv.excel
-        for row in csv.DictReader(f, dialect=dialect):
-            if row.get("approved", "").strip().upper() != "Y":
-                continue
-            url = (row.get("override_url") or "").strip() or row.get("google_url", "").strip()
-            if not url:
-                continue
-            out.append({
-                "dealer_id": row["dealer_id"],
-                "firma_adi": row["firma_adi"],
-                "cleaned_name": row["cleaned_name"],
-                "ilce": row["ilce"],
-                "kategori": row["kategori"],
-                "google_url": url,
-                "google_name": row.get("google_name"),
-                "match_confidence": "manual",
-            })
+    text, used_enc = _read_csv_text(MANUAL_CSV_PATH)
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+        delim = dialect.delimiter
+    except csv.Error:
+        delim = ","
+    print(f"  [csv] encoding={used_enc} delimiter={delim!r}")
+    import io
+    reader = csv.DictReader(io.StringIO(text), delimiter=delim)
+    for row in reader:
+        if row.get("approved", "").strip().upper() != "Y":
+            continue
+        url = (row.get("override_url") or "").strip() or row.get("google_url", "").strip()
+        if not url:
+            continue
+        out.append({
+            "dealer_id": row["dealer_id"],
+            "firma_adi": row["firma_adi"],
+            "cleaned_name": row["cleaned_name"],
+            "ilce": row["ilce"],
+            "kategori": row["kategori"],
+            "google_url": url,
+            "google_name": row.get("google_name"),
+            "match_confidence": "manual",
+        })
     return out
 
 
