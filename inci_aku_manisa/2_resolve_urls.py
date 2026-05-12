@@ -39,7 +39,7 @@ os.environ.setdefault("REQUESTS_CA_BUNDLE", "")
 os.environ.setdefault("CURL_CA_BUNDLE", "")
 
 sys.path.insert(0, str(Path(__file__).parent))
-from name_utils import clean_dealer_name, score_candidate  # noqa: E402
+from name_utils import clean_dealer_name, normalize_phone, score_candidate  # noqa: E402
 
 from seleniumbase import SB  # noqa: E402
 
@@ -50,6 +50,7 @@ AUTO_PATH = DATA_DIR / "urls_auto.json"
 MANUAL_CSV_PATH = DATA_DIR / "manual_review.csv"
 
 MAX_CANDIDATES = 5
+PHONE_CHECK_TOPN = 3        # bayide telefon varsa kaç adayda panel kontrolü yapılsın
 LIST_WAIT_S = 8
 COOKIE_LABELS = ("Tümünü kabul et", "Hepsini kabul et", "Tümünü reddet", "Accept all")
 NAME_BLACKLIST = ("Sonuçlar", "Results", "Sponsorlu", "Sponsored", "Reklam")
@@ -225,6 +226,48 @@ def read_current_panel(sb, fallback_url):
     return {"name": name, "lat": lat, "lng": lng, "phone": phone, "url": cur}
 
 
+def back_to_list(sb, search_url):
+    """Place panelinden liste view'a dön. history.back() öncelikli;
+    başarısızsa arama URL'ini yeniden açar."""
+    try:
+        sb.execute_script("history.back()")
+    except Exception:
+        pass
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        try:
+            if sb.is_element_visible("a.hfpxzc"):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.3)
+    sb.open(search_url)
+    sb.sleep(1.5)
+    return wait_for_list_or_place(sb) == "list"
+
+
+def visit_candidate(sb, dealer_with_clean, cand):
+    """Adayı tıkla, panel'den (ad, koord, telefon) oku, yeniden skor üret.
+    Başarısızsa None döner."""
+    if not click_candidate_by_idx(sb, cand["idx"]):
+        return None
+    if not wait_for_place_url(sb, timeout=8):
+        return None
+    sb.sleep(1.0)
+    panel = read_current_panel(sb, cand.get("href") or "")
+    merged = {
+        "idx": cand["idx"],
+        "name": panel["name"] or cand.get("name"),
+        "lat": panel["lat"] if panel["lat"] is not None else cand.get("lat"),
+        "lng": panel["lng"] if panel["lng"] is not None else cand.get("lng"),
+        "phone": panel["phone"],
+        "url": panel["url"],
+        "href": cand.get("href"),
+    }
+    total, conf, bd = score_candidate(dealer_with_clean, merged)
+    return {**merged, "score": total, "confidence": conf, "breakdown": bd}
+
+
 def resolve_one(sb, dealer):
     cleaned = clean_dealer_name(dealer["firma_adi"])
     ilce = dealer.get("ilce") or ""
@@ -293,23 +336,44 @@ def resolve_one(sb, dealer):
         total, conf, bd = score_candidate(dealer_with_clean, c)
         pre_scored.append({**c, "score": total, "confidence": conf, "breakdown": bd})
     pre_scored.sort(key=lambda x: x["score"], reverse=True)
-    best = pre_scored[0]
 
-    # D) En iyiyi tıkla, panel'den telefon vs gerçek bilgilerle yeniden skorla
-    clicked = click_candidate_by_idx(sb, best["idx"])
-    if clicked and wait_for_place_url(sb, timeout=8):
-        sb.sleep(1.2)
-        panel = read_current_panel(sb, best.get("href") or "")
-        merged = {
-            "idx": best["idx"],
-            "name": panel["name"] or best.get("name"),
-            "lat": panel["lat"] if panel["lat"] is not None else best.get("lat"),
-            "lng": panel["lng"] if panel["lng"] is not None else best.get("lng"),
-            "phone": panel["phone"],
-            "url": panel["url"],
-        }
-        total, conf, bd = score_candidate(dealer_with_clean, merged)
-        best = {**merged, "score": total, "confidence": conf, "breakdown": bd}
+    # D) Bayinin telefonu varsa: ön skor sırasıyla ilk N adayda telefon kontrolü.
+    #    Eşleşme bulduğum an dururum; bulamazsam ziyaret edilenler arasından
+    #    en yüksek skorlu adayı seçerim. Telefon yoksa eski "best'i tıkla" akışı.
+    search_url = build_search_url(dealer_with_clean, query)
+    dealer_has_phone = bool(normalize_phone(dealer.get("telefon")))
+    visited = []
+    phone_winner = None
+    mode_tag = "list_pick"
+
+    if dealer_has_phone and pre_scored:
+        candidates_to_check = pre_scored[:PHONE_CHECK_TOPN]
+        for i, c in enumerate(candidates_to_check):
+            visit = visit_candidate(sb, dealer_with_clean, c)
+            if visit is None:
+                # tıklama veya place geçişi başarısız → sıradakine
+                if i < len(candidates_to_check) - 1:
+                    back_to_list(sb, search_url)
+                continue
+            visited.append(visit)
+            if visit["breakdown"].get("phone_match"):
+                phone_winner = visit
+                mode_tag = "phone_match"
+                break
+            if i < len(candidates_to_check) - 1:
+                back_to_list(sb, search_url)
+
+    if phone_winner is not None:
+        best = phone_winner
+    elif visited:
+        best = max(visited, key=lambda x: x["score"])
+        mode_tag = "best_visited"
+    else:
+        # Bayide telefon yok veya hiç ziyaret edemedik → en iyi ön skoru tıkla
+        best = pre_scored[0]
+        visit = visit_candidate(sb, dealer_with_clean, best)
+        if visit is not None:
+            best = visit
 
     return {
         "query": query,
@@ -321,7 +385,7 @@ def resolve_one(sb, dealer):
         "confidence": best["confidence"],
         "breakdown": best["breakdown"],
         "all_candidates": pre_scored,
-        "mode": "list_pick",
+        "mode": mode_tag,
     }
 
 
@@ -437,7 +501,8 @@ def main():
                         f"      score={result['score']} ({result['confidence']})  "
                         f"name={bd.get('name_pts')} dist={bd.get('dist_pts')} "
                         f"phone={bd.get('phone_pts')} d={bd.get('dist_km')}km "
-                        f"phone_match={bd.get('phone_match')}"
+                        f"phone_match={bd.get('phone_match')}  "
+                        f"mode={result.get('mode')}"
                     )
                     raw[dealer_key(d)] = result
                 except Exception as e:
