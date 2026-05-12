@@ -97,12 +97,12 @@ def analyze(reviews):
             "avg_rating_overall": None,
             "avg_rating_battery": None,
             "is_likely_pure_battery_dealer": False,
-            "annotated_reviews": [],
+            "battery_only_reviews": [],
         }
 
     all_ratings, bat_ratings = [], []
     n_bat = n_oth = 0
-    annotated = []
+    battery_only = []
     for r in reviews:
         text = r.get("text") or ""
         bk = contains_any(text, BATTERY)
@@ -113,9 +113,14 @@ def analyze(reviews):
             n_bat += 1
             if r.get("rating") is not None:
                 bat_ratings.append(r["rating"])
+            # Akü kelimesi varsa al, yan-iş de geçse dahil et.
+            battery_only.append({
+                **r,
+                "battery_keywords": bk,
+                "other_business_keywords": ok,
+            })
         if ok:
             n_oth += 1
-        annotated.append({**r, "battery_keywords": bk, "other_business_keywords": ok})
 
     bat_ratio = n_bat / total
     oth_ratio = n_oth / total
@@ -132,7 +137,7 @@ def analyze(reviews):
         "is_likely_pure_battery_dealer": (
             bat_ratio >= PURE_BATTERY_BAT_RATIO and oth_ratio < PURE_BATTERY_MAX_OTHER
         ),
-        "annotated_reviews": annotated,
+        "battery_only_reviews": battery_only,
     }
 
 
