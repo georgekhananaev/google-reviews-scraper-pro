@@ -53,12 +53,22 @@ def load_auto():
 
 def load_manual_approved():
     """manual_review.csv'den approved=Y olanları al.
-    override_url doluysa onu kullan, yoksa google_url."""
+    override_url doluysa onu kullan, yoksa google_url.
+
+    Excel TR locale CSV'yi noktalı virgül ile kaydedebildiği için
+    delimiter auto-detect ediyoruz (Sniffer , ve ;'ye bakar).
+    """
     if not MANUAL_CSV_PATH.exists():
         return []
     out = []
     with MANUAL_CSV_PATH.open(encoding="utf-8") as f:
-        for row in csv.DictReader(f):
+        sample = f.read(4096)
+        f.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+        for row in csv.DictReader(f, dialect=dialect):
             if row.get("approved", "").strip().upper() != "Y":
                 continue
             url = (row.get("override_url") or "").strip() or row.get("google_url", "").strip()
