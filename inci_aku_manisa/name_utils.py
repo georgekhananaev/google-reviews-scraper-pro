@@ -80,7 +80,7 @@ def match_confidence(cleaned_name: str, google_name: str | None) -> tuple[str, f
 
 
 def normalize_phone(s):
-    """Türkiye telefon numarasını son 10 haneye indir.
+    """Tek bir Türkiye telefon numarasını son 10 haneye indir.
     '+90 236 123 45 67', '0236 1234567', '236-123-45-67' → '2361234567'.
     """
     if not s:
@@ -91,6 +91,26 @@ def normalize_phone(s):
     if digits.startswith("0"):
         digits = digits[1:]
     return digits[-10:] if len(digits) >= 10 else digits
+
+
+def normalize_phones(value):
+    """String veya liste-of-string'den normalize edilmiş telefon set'i çıkar.
+
+    inciaku bazı bayilerde tek string ('5358443519') verir, bazılarında
+    liste (['02365 233 25 10', '0533 167 36 58']). İkisini de set olarak
+    döndürür.
+    """
+    if not value:
+        return set()
+    items = value if isinstance(value, (list, tuple, set)) else [value]
+    out = set()
+    for item in items:
+        if not item:
+            continue
+        n = normalize_phone(item)
+        if len(n) >= 10:
+            out.add(n)
+    return out
 
 
 def haversine_km(lat1, lng1, lat2, lng2):
@@ -146,9 +166,10 @@ def score_candidate(dealer, candidate):
     else:
         dist_pts = 0
 
-    dealer_phone = normalize_phone(dealer.get("telefon"))
-    cand_phone = normalize_phone(candidate.get("phone"))
-    phone_match = bool(dealer_phone and cand_phone and dealer_phone == cand_phone)
+    dealer_phones = normalize_phones(dealer.get("telefon"))
+    cand_phones = normalize_phones(candidate.get("phone"))
+    matched_phones = dealer_phones & cand_phones
+    phone_match = bool(matched_phones)
     phone_pts = 100 if phone_match else 0
 
     total = name_pts + common_pts + dist_pts + phone_pts
@@ -177,5 +198,8 @@ def score_candidate(dealer, candidate):
         "common_words": common,
         "meaningful_common": meaningful_common,
         "phone_match": phone_match,
+        "dealer_phones": sorted(dealer_phones),
+        "cand_phones": sorted(cand_phones),
+        "matched_phones": sorted(matched_phones),
     }
     return total, confidence, breakdown
