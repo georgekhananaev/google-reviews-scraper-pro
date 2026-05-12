@@ -1,5 +1,6 @@
-"""Bayi adı temizleme + isim eşleşme güven skorlama."""
+"""Bayi adı temizleme + isim eşleşme + telefon/koordinat yardımcıları."""
 
+import math
 import re
 import unicodedata
 from difflib import SequenceMatcher
@@ -63,3 +64,86 @@ def match_confidence(cleaned_name: str, google_name: str | None) -> tuple[str, f
     if sim >= 0.5:
         return ("medium", sim, [])
     return ("low", sim, [])
+
+
+def normalize_phone(s):
+    """Türkiye telefon numarasını son 10 haneye indir.
+    '+90 236 123 45 67', '0236 1234567', '236-123-45-67' → '2361234567'.
+    """
+    if not s:
+        return ""
+    digits = re.sub(r"\D", "", str(s))
+    if digits.startswith("90") and len(digits) > 10:
+        digits = digits[2:]
+    if digits.startswith("0"):
+        digits = digits[1:]
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def haversine_km(lat1, lng1, lat2, lng2):
+    """İki coğrafi nokta arası km. None değer varsa float('inf') döner."""
+    if None in (lat1, lng1, lat2, lng2):
+        return float("inf")
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def score_candidate(dealer, candidate):
+    """Bayi (inciaku) vs aday (Google Maps) için multi-signal skor.
+
+    Sinyaller:
+      - telefon eşleşmesi: +100 (kesinlik bonusu)
+      - mesafe         : <100m +50, <500m +30, <2km +10
+      - name similarity: 0..1 → 0..30
+      - ortak 4+ harf kelime: her biri +10 (max 30)
+
+    Eşikler:  high >= 70,  medium >= 35,  aksi low.
+
+    Dönüş: (toplam_skor: int, confidence: str, breakdown: dict)
+    """
+    cleaned = dealer.get("cleaned_name") or dealer.get("firma_adi") or ""
+    sim_label, sim, common = match_confidence(cleaned, candidate.get("name"))
+    name_pts = round(sim * 30)
+    common_pts = min(len(common), 3) * 10
+
+    dist_km = haversine_km(
+        dealer.get("lat"), dealer.get("lng"),
+        candidate.get("lat"), candidate.get("lng"),
+    )
+    if dist_km < 0.1:
+        dist_pts = 50
+    elif dist_km < 0.5:
+        dist_pts = 30
+    elif dist_km < 2.0:
+        dist_pts = 10
+    else:
+        dist_pts = 0
+
+    dealer_phone = normalize_phone(dealer.get("telefon"))
+    cand_phone = normalize_phone(candidate.get("phone"))
+    phone_match = bool(dealer_phone and cand_phone and dealer_phone == cand_phone)
+    phone_pts = 100 if phone_match else 0
+
+    total = name_pts + common_pts + dist_pts + phone_pts
+    if phone_match or total >= 70:
+        confidence = "high"
+    elif total >= 35:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    breakdown = {
+        "name_pts": name_pts,
+        "common_pts": common_pts,
+        "dist_pts": dist_pts,
+        "phone_pts": phone_pts,
+        "dist_km": round(dist_km, 2) if dist_km != float("inf") else None,
+        "name_sim": round(sim, 3),
+        "common_words": common,
+        "phone_match": phone_match,
+    }
+    return total, confidence, breakdown

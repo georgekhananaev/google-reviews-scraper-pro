@@ -1,32 +1,45 @@
-"""Aşama 2: Bayi adı → Google Maps URL eşlemesi (karma yaklaşım).
+"""Aşama 2: Bayi → Google Maps URL (multi-signal scoring).
 
-Her bayi için Google Maps'te '{temiz_ad} {ilçe} {şehir}' aranır,
-/maps/place/ URL'i ve işletme adı çekilir. İsim benzerliğine göre 3 kova:
+Sinyaller (her bayi için inciaku'da mevcut):
+  - koordinat (lat/lng)  → search URL'i koordinat civarına yönlendirir
+                          + her adayın mesafesine göre puan
+  - telefon              → adayın panelinden okunup karşılaştırılır;
+                          eşleşme tek başına high confidence verir
+  - isim                 → temizlenmiş bayi adı vs Google işletme adı
 
-  high   → urls_auto.json (otomatik onaylı)
-  medium → manual_review.csv (manuel onay gerekli)
-  low    → manual_review.csv (manuel onay gerekli)
+Akış:
+  1. /maps/search/<q>/@<lat>,<lng>,15z aç (koord-biased)
+  2. Sponsor olmayan ilk N organik adayı topla (ad + href'ten lat/lng)
+  3. Her aday için (isim+mesafe) ön skor
+  4. En iyi adayı tıkla, panel'den telefonu da oku, yeniden skorla
+  5. Skora göre auto / manual kovasına ayır
 
-Resume: data/urls_resolved_raw.json mevcutsa orada bulunan bayiler atlanır.
+Resume: data/urls_resolved_raw.json mevcutsa atlanır.
 Sıfırdan başlamak için bu dosyayı sil.
 
 Kullanım:
-    python inci_aku_manisa/2_resolve_urls.py             # tüm bayiler
-    python inci_aku_manisa/2_resolve_urls.py --headless  # arka planda
-    python inci_aku_manisa/2_resolve_urls.py --limit 5   # test için 5 bayi
+    python resolve_urls.py
+    python resolve_urls.py --headless
+    python resolve_urls.py --limit 5
 """
 
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import quote
 
-# Komut satırından çalışınca paket içindeki kardeş modüller import edilebilsin
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+os.environ.setdefault("REQUESTS_CA_BUNDLE", "")
+os.environ.setdefault("CURL_CA_BUNDLE", "")
+
 sys.path.insert(0, str(Path(__file__).parent))
-from name_utils import clean_dealer_name, match_confidence  # noqa: E402
+from name_utils import clean_dealer_name, score_candidate  # noqa: E402
 
 from seleniumbase import SB  # noqa: E402
 
@@ -36,9 +49,15 @@ RAW_PATH = DATA_DIR / "urls_resolved_raw.json"
 AUTO_PATH = DATA_DIR / "urls_auto.json"
 MANUAL_CSV_PATH = DATA_DIR / "manual_review.csv"
 
-NAV_TIMEOUT_S = 12
+MAX_CANDIDATES = 5
+LIST_WAIT_S = 8
 COOKIE_LABELS = ("Tümünü kabul et", "Hepsini kabul et", "Tümünü reddet", "Accept all")
+NAME_BLACKLIST = ("Sonuçlar", "Results", "Sponsorlu", "Sponsored", "Reklam")
 
+
+# ---------------------------------------------------------------------------
+# Selenium yardımcıları
+# ---------------------------------------------------------------------------
 
 def dealer_key(d):
     return d.get("id") or f"{d['firma_adi']}|{d.get('ilce') or ''}"
@@ -54,52 +73,94 @@ def accept_cookies(sb):
             continue
 
 
-def wait_for_place(sb, total_timeout=NAV_TIMEOUT_S):
-    """Maps arama sonrası /maps/place/ URL'i veya liste görünümünü bekle.
-    Liste görünümündeyse ilk sonuca tıkla.
+_LATLNG_RE = re.compile(r"@(-?\d+\.\d+),(-?\d+\.\d+)")
+
+
+def parse_latlng(url):
+    m = _LATLNG_RE.search(url or "")
+    if not m:
+        return None, None
+    return float(m.group(1)), float(m.group(2))
+
+
+def collect_candidates(sb):
+    """Search liste'sinden sponsor olmayan ilk MAX_CANDIDATES adayı topla.
+    Her aday: {idx, href, name, lat, lng}.
     """
-    deadline = time.time() + total_timeout
+    return sb.execute_script(
+        """
+        const MAX = arguments[0];
+        const out = [];
+        const links = Array.from(document.querySelectorAll('a.hfpxzc'));
+        for (const a of links) {
+            const card = a.closest('[role="article"], div[jsaction]') || a.parentElement;
+            const txt = ((card && card.innerText) || '').toLowerCase();
+            if (txt.includes('sponsorlu') || txt.includes('sponsored')) continue;
+            const m = (a.href || '').match(/@(-?\\d+\\.\\d+),(-?\\d+\\.\\d+)/);
+            out.push({
+                idx: out.length,
+                href: a.href,
+                name: (a.getAttribute('aria-label') || '').trim(),
+                lat: m ? parseFloat(m[1]) : null,
+                lng: m ? parseFloat(m[2]) : null,
+            });
+            if (out.length >= MAX) break;
+        }
+        return out;
+        """,
+        MAX_CANDIDATES,
+    ) or []
+
+
+def click_candidate_by_idx(sb, idx):
+    """Sponsor olmayan idx. organik sonucu tıkla."""
+    return sb.execute_script(
+        """
+        const target = arguments[0];
+        const links = Array.from(document.querySelectorAll('a.hfpxzc'));
+        let count = 0;
+        for (const a of links) {
+            const card = a.closest('[role="article"], div[jsaction]') || a.parentElement;
+            const txt = ((card && card.innerText) || '').toLowerCase();
+            if (txt.includes('sponsorlu') || txt.includes('sponsored')) continue;
+            if (count === target) {
+                a.scrollIntoView({block:'center'});
+                a.click();
+                return true;
+            }
+            count++;
+        }
+        return false;
+        """,
+        idx,
+    )
+
+
+def wait_for_place_url(sb, timeout):
+    deadline = time.time() + timeout
     while time.time() < deadline:
-        url = sb.get_current_url()
-        if "/maps/place/" in url:
+        if "/maps/place/" in sb.get_current_url():
             return True
-        # Liste görünümü: sponsorlu OLMAYAN ilk organik sonucu tıkla.
-        # a.hfpxzc hem sponsorlu hem organik linkleri kapsıyor; parent
-        # kartında "Sponsorlu"/"Sponsored" geçenleri atla.
-        try:
-            clicked = sb.execute_script(
-                """
-                const links = Array.from(document.querySelectorAll('a.hfpxzc'));
-                for (const a of links) {
-                    const card = a.closest('[role="article"], div[jsaction]') || a.parentElement;
-                    const txt = ((card && card.innerText) || '').toLowerCase();
-                    if (txt.includes('sponsorlu') || txt.includes('sponsored')) continue;
-                    a.scrollIntoView({block:'center'});
-                    a.click();
-                    return true;
-                }
-                return false;
-                """
-            )
-            if clicked:
-                inner_deadline = time.time() + 6
-                while time.time() < inner_deadline:
-                    if "/maps/place/" in sb.get_current_url():
-                        return True
-                    time.sleep(0.3)
-                break
-        except Exception:
-            pass
-        time.sleep(0.4)
+        time.sleep(0.3)
     return "/maps/place/" in sb.get_current_url()
 
 
-# Sayfada "gerçek işletme adı" değil de Google liste/reklam etiketi olan değerler
-_NAME_BLACKLIST = ("Sonuçlar", "Results", "Sponsorlu", "Sponsored", "Reklam")
+def wait_for_list_or_place(sb, timeout=LIST_WAIT_S):
+    """Liste yüklendi veya direkt place'e gittik."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if "/maps/place/" in sb.get_current_url():
+            return "place"
+        try:
+            if sb.is_element_visible("a.hfpxzc"):
+                return "list"
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return "place" if "/maps/place/" in sb.get_current_url() else "none"
 
 
-def get_place_name(sb):
-    """İşletme panelinden gerçek adı al. Liste başlığı / sponsor etiketini atla."""
+def get_panel_name(sb):
     try:
         names = sb.execute_script(
             """
@@ -111,40 +172,162 @@ def get_place_name(sb):
             return out;
             """
         ) or []
-        for n in names:
-            if not n:
-                continue
-            if any(bad in n for bad in _NAME_BLACKLIST):
-                continue
-            return n
     except Exception:
-        pass
+        return None
+    for n in names:
+        if n and not any(bad in n for bad in NAME_BLACKLIST):
+            return n
     return None
 
 
-def resolve_one(sb, query):
-    """Tek bir bayi için arama yap, URL + ad döndür."""
-    search_url = (
-        "https://www.google.com/maps/search/?api=1&hl=tr&query="
-        + re.sub(r"\s+", "+", query.strip())
-    )
-    sb.open(search_url)
+def get_panel_phone(sb):
+    """İşletme panelinden telefon bilgisini çek (ham metin)."""
+    try:
+        return sb.execute_script(
+            """
+            const sels = [
+                'button[data-item-id^="phone:"]',
+                'button[aria-label^="Telefon:"]',
+                'button[aria-label^="Phone:"]',
+            ];
+            for (const s of sels) {
+                const el = document.querySelector(s);
+                if (el) {
+                    return (el.getAttribute('aria-label') || el.innerText || '').trim();
+                }
+            }
+            return '';
+            """
+        ) or None
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Ana resolve akışı
+# ---------------------------------------------------------------------------
+
+def build_search_url(dealer, query):
+    """Bayi koordinatı varsa koord-biased URL, yoksa düz arama."""
+    encoded = quote(query)
+    lat, lng = dealer.get("lat"), dealer.get("lng")
+    if lat and lng:
+        return f"https://www.google.com/maps/search/{encoded}/@{lat},{lng},15z?hl=tr"
+    return f"https://www.google.com/maps/search/?api=1&hl=tr&query={encoded}"
+
+
+def read_current_panel(sb, fallback_url):
+    """Açık place sayfasından (ad, lat, lng, telefon, url) tuple döndür."""
+    cur = sb.get_current_url() or fallback_url
+    name = get_panel_name(sb)
+    phone = get_panel_phone(sb)
+    lat, lng = parse_latlng(cur)
+    return {"name": name, "lat": lat, "lng": lng, "phone": phone, "url": cur}
+
+
+def resolve_one(sb, dealer):
+    cleaned = clean_dealer_name(dealer["firma_adi"])
+    ilce = dealer.get("ilce") or ""
+    sehir = dealer.get("sehir") or "Manisa"
+    query = re.sub(r"\s+", " ", f"{cleaned} {ilce} {sehir}").strip()
+
+    sb.open(build_search_url({**dealer, "cleaned_name": cleaned}, query))
     sb.sleep(2.0)
     accept_cookies(sb)
     sb.sleep(1.0)
 
-    on_place = wait_for_place(sb)
-    current = sb.get_current_url()
-    if not on_place:
-        return {"google_url": None, "google_name": None, "final_url": current}
+    state = wait_for_list_or_place(sb)
 
-    sb.sleep(1.0)  # panel yüklemesi
+    # A) Google tek sonuç bulup direkt place'e gittiyse
+    if state == "place":
+        panel = read_current_panel(sb, "")
+        cand = {**panel}
+        cand["idx"] = 0
+        scored = [{
+            **cand,
+            **dict(zip(("score", "confidence", "breakdown"),
+                       score_candidate({**dealer, "cleaned_name": cleaned}, cand))),
+        }]
+        best = scored[0]
+        return {
+            "query": query,
+            "cleaned_name": cleaned,
+            "google_url": panel["url"],
+            "google_name": panel["name"],
+            "google_phone": panel["phone"],
+            "score": best["score"],
+            "confidence": best["confidence"],
+            "breakdown": best["breakdown"],
+            "all_candidates": scored,
+            "mode": "direct_place",
+        }
+
+    # B) Liste yok
+    if state != "list":
+        return {
+            "query": query,
+            "cleaned_name": cleaned,
+            "google_url": None,
+            "google_name": None,
+            "google_phone": None,
+            "score": 0,
+            "confidence": "low",
+            "breakdown": {},
+            "all_candidates": [],
+            "mode": "no_results",
+        }
+
+    # C) Liste var → adayları topla, ön skorla
+    cands = collect_candidates(sb)
+    if not cands:
+        return {
+            "query": query, "cleaned_name": cleaned,
+            "google_url": None, "google_name": None, "google_phone": None,
+            "score": 0, "confidence": "low", "breakdown": {},
+            "all_candidates": [], "mode": "list_empty",
+        }
+
+    dealer_with_clean = {**dealer, "cleaned_name": cleaned}
+    pre_scored = []
+    for c in cands:
+        total, conf, bd = score_candidate(dealer_with_clean, c)
+        pre_scored.append({**c, "score": total, "confidence": conf, "breakdown": bd})
+    pre_scored.sort(key=lambda x: x["score"], reverse=True)
+    best = pre_scored[0]
+
+    # D) En iyiyi tıkla, panel'den telefon vs gerçek bilgilerle yeniden skorla
+    clicked = click_candidate_by_idx(sb, best["idx"])
+    if clicked and wait_for_place_url(sb, timeout=8):
+        sb.sleep(1.2)
+        panel = read_current_panel(sb, best.get("href") or "")
+        merged = {
+            "idx": best["idx"],
+            "name": panel["name"] or best.get("name"),
+            "lat": panel["lat"] if panel["lat"] is not None else best.get("lat"),
+            "lng": panel["lng"] if panel["lng"] is not None else best.get("lng"),
+            "phone": panel["phone"],
+            "url": panel["url"],
+        }
+        total, conf, bd = score_candidate(dealer_with_clean, merged)
+        best = {**merged, "score": total, "confidence": conf, "breakdown": bd}
+
     return {
-        "google_url": current,
-        "google_name": get_place_name(sb),
-        "final_url": current,
+        "query": query,
+        "cleaned_name": cleaned,
+        "google_url": best.get("url") or best.get("href"),
+        "google_name": best.get("name"),
+        "google_phone": best.get("phone"),
+        "score": best["score"],
+        "confidence": best["confidence"],
+        "breakdown": best["breakdown"],
+        "all_candidates": pre_scored,
+        "mode": "list_pick",
     }
 
+
+# ---------------------------------------------------------------------------
+# Persist + raporlama
+# ---------------------------------------------------------------------------
 
 def load_raw():
     if RAW_PATH.exists():
@@ -153,36 +336,30 @@ def load_raw():
 
 
 def save_raw(raw):
-    RAW_PATH.write_text(
-        json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    RAW_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def build_outputs(raw, dealers):
-    """Raw resolution sonuçlarını high/medium/low kovalarına ayır."""
-    auto = []
-    manual = []
+    auto, manual = [], []
     for d in dealers:
-        key = dealer_key(d)
-        entry = raw.get(key)
+        entry = raw.get(dealer_key(d))
         if not entry:
             continue
-        cleaned = clean_dealer_name(d["firma_adi"])
-        confidence, sim, common = match_confidence(cleaned, entry.get("google_name"))
         record = {
-            "dealer_id": key,
+            "dealer_id": dealer_key(d),
             "firma_adi": d["firma_adi"],
-            "cleaned_name": cleaned,
+            "cleaned_name": entry.get("cleaned_name") or clean_dealer_name(d["firma_adi"]),
             "ilce": d.get("ilce"),
             "sehir": d.get("sehir"),
             "kategori": d.get("kategori"),
             "google_name": entry.get("google_name"),
             "google_url": entry.get("google_url"),
-            "name_sim": round(sim, 3),
-            "match_confidence": confidence,
-            "common_words": common,
+            "google_phone": entry.get("google_phone"),
+            "score": entry.get("score", 0),
+            "match_confidence": entry.get("confidence", "low"),
+            "breakdown": entry.get("breakdown", {}),
         }
-        if confidence == "high":
+        if record["match_confidence"] == "high" and record["google_url"]:
             auto.append(record)
         else:
             manual.append(record)
@@ -190,18 +367,19 @@ def build_outputs(raw, dealers):
 
 
 def write_outputs(auto, manual):
-    AUTO_PATH.write_text(
-        json.dumps(auto, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    AUTO_PATH.write_text(json.dumps(auto, ensure_ascii=False, indent=2), encoding="utf-8")
     fields = [
         "dealer_id", "firma_adi", "cleaned_name", "ilce", "kategori",
-        "google_name", "google_url", "name_sim", "match_confidence",
+        "google_name", "google_url", "google_phone",
+        "score", "match_confidence",
+        "name_pts", "dist_pts", "phone_pts", "dist_km", "phone_match",
         "approved", "override_url",
     ]
     with MANUAL_CSV_PATH.open("w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         for r in manual:
+            bd = r.get("breakdown") or {}
             w.writerow({
                 "dealer_id": r["dealer_id"],
                 "firma_adi": r["firma_adi"],
@@ -210,23 +388,33 @@ def write_outputs(auto, manual):
                 "kategori": r["kategori"] or "",
                 "google_name": r["google_name"] or "",
                 "google_url": r["google_url"] or "",
-                "name_sim": r["name_sim"],
+                "google_phone": r["google_phone"] or "",
+                "score": r["score"],
                 "match_confidence": r["match_confidence"],
-                "approved": "",     # Y / N — sen doldur
-                "override_url": "", # doğru Maps URL'i biliyorsan yapıştır
+                "name_pts": bd.get("name_pts", ""),
+                "dist_pts": bd.get("dist_pts", ""),
+                "phone_pts": bd.get("phone_pts", ""),
+                "dist_km": bd.get("dist_km", ""),
+                "phone_match": bd.get("phone_match", ""),
+                "approved": "",
+                "override_url": "",
             })
 
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--headless", action="store_true")
-    ap.add_argument("--limit", type=int, default=0, help="0 = limitsiz")
-    ap.add_argument("--sleep", type=float, default=2.5, help="bayiler arası gecikme (sn)")
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--sleep", type=float, default=2.5)
+    ap.add_argument("--uc", action="store_true", help="undetected-chromedriver modu")
     args = ap.parse_args()
 
     if not DEALERS_PATH.exists():
-        print(f"HATA: {DEALERS_PATH} yok. Önce 1_fetch_dealers.py çalıştır.",
-              file=sys.stderr)
+        print(f"HATA: {DEALERS_PATH} yok. Önce 1_fetch_dealers.py.", file=sys.stderr)
         sys.exit(1)
 
     dealers = json.loads(DEALERS_PATH.read_text(encoding="utf-8"))
@@ -238,28 +426,26 @@ def main():
     print(f"Toplam: {len(dealers)} | önceden çözülmüş: {len(raw)} | yapılacak: {len(todo)}")
 
     if todo:
-        with SB(uc=True, locale="tr", headless=args.headless) as sb:
+        with SB(uc=args.uc, locale="tr", headless=args.headless) as sb:
             for i, d in enumerate(todo, 1):
-                cleaned = clean_dealer_name(d["firma_adi"])
-                ilce = d.get("ilce") or ""
-                sehir = d.get("sehir") or "Manisa"
-                query = re.sub(r"\s+", " ", f"{cleaned} {ilce} {sehir}").strip()
-                print(f"[{i}/{len(todo)}] {d['firma_adi'][:50]} → q={query!r}")
+                print(f"[{i}/{len(todo)}] {d['firma_adi'][:60]}")
                 try:
-                    result = resolve_one(sb, query)
-                    confidence, sim, _ = match_confidence(cleaned, result.get("google_name"))
-                    print(f"    → {result.get('google_name')!r} "
-                          f"[{confidence} sim={sim:.2f}]")
-                    raw[dealer_key(d)] = {
-                        **result,
-                        "query": query,
-                        "cleaned_name": cleaned,
-                    }
+                    result = resolve_one(sb, d)
+                    bd = result.get("breakdown") or {}
+                    print(
+                        f"    → {result.get('google_name')!r}\n"
+                        f"      score={result['score']} ({result['confidence']})  "
+                        f"name={bd.get('name_pts')} dist={bd.get('dist_pts')} "
+                        f"phone={bd.get('phone_pts')} d={bd.get('dist_km')}km "
+                        f"phone_match={bd.get('phone_match')}"
+                    )
+                    raw[dealer_key(d)] = result
                 except Exception as e:
                     print(f"    ✗ HATA: {e}")
                     raw[dealer_key(d)] = {
                         "google_url": None, "google_name": None,
-                        "error": str(e), "query": query,
+                        "score": 0, "confidence": "low", "breakdown": {},
+                        "error": str(e),
                     }
                 save_raw(raw)
                 if i < len(todo):
@@ -270,11 +456,10 @@ def main():
     print(f"\n[done]")
     print(f"  auto (high confidence)  : {len(auto):3d} → {AUTO_PATH}")
     print(f"  manual review needed    : {len(manual):3d} → {MANUAL_CSV_PATH}")
-    print(f"\nŞimdi {MANUAL_CSV_PATH.name} dosyasını aç, her satır için:")
-    print("  - google_url doğruysa  → approved=Y")
-    print("  - yanlış işletme       → approved=N")
-    print("  - başka URL biliyorsan → override_url'e yapıştır, approved=Y")
-    print("Sonra 3_gen_config.py çalıştır.")
+    print(f"\nManuel review için {MANUAL_CSV_PATH.name} aç. Score düşükse")
+    print("  - yanlış işletme yakalanmış olabilir → approved=N")
+    print("  - doğru URL'i biliyorsan override_url'e yapıştır + approved=Y")
+    print("\nSonra: python 3_gen_config.py")
 
 
 if __name__ == "__main__":
