@@ -16,6 +16,19 @@ _BIZ_WORDS = {
     "SAN", "TİC", "LTD", "ŞTİ",
 }
 
+# Anlamsız ortak: hem inciaku hem Google adında geçse bile bayi eşleşmesini
+# ispatlamayan jenerik kelimeler (şehir + sektör adları). normalize edilmiş
+# (ascii-fold, küçük harf) hâlleriyle saklanır.
+_GENERIC_COMMON_WORDS = {
+    # şehirler
+    "manisa", "izmir", "istanbul", "ankara", "bursa", "antalya",
+    "konya", "adana", "gaziantep", "kayseri", "mersin",
+    # genel sektör / tür
+    "otomotiv", "servis", "servisi", "merkez", "merkezi",
+    # ticari ekler
+    "ticaret", "ticari", "sanayi", "anonim", "limited",
+}
+
 
 def clean_dealer_name(name: str) -> str:
     """inciaku 'BARIŞ OTO - RECEP KERMEN' formatından sahip adını sıyır."""
@@ -101,7 +114,16 @@ def score_candidate(dealer, candidate):
       - name similarity: 0..1 → 0..30
       - ortak 4+ harf kelime: her biri +10 (max 30)
 
-    Eşikler:  high >= 70,  medium >= 35,  aksi low.
+    Eşikler:
+      - phone_match              → high
+      - total >= 70              → high
+      - anlamlı ortak kelime var + total >= 35 → high
+      - total >= 35              → medium
+      - aksi                     → low
+
+    "Anlamlı" = jenerik (şehir/sektör) sayılmayan kelime. 'manisa' veya
+    'otomotiv' iki kayıtta geçse bile bayi eşleşmesini ispatlamaz; 'pekar'
+    veya 'eksioglu' gibi özgün kelimeler ispatlar.
 
     Dönüş: (toplam_skor: int, confidence: str, breakdown: dict)
     """
@@ -109,6 +131,7 @@ def score_candidate(dealer, candidate):
     sim_label, sim, common = match_confidence(cleaned, candidate.get("name"))
     name_pts = round(sim * 30)
     common_pts = min(len(common), 3) * 10
+    meaningful_common = [w for w in common if w not in _GENERIC_COMMON_WORDS]
 
     dist_km = haversine_km(
         dealer.get("lat"), dealer.get("lng"),
@@ -129,7 +152,15 @@ def score_candidate(dealer, candidate):
     phone_pts = 100 if phone_match else 0
 
     total = name_pts + common_pts + dist_pts + phone_pts
-    if phone_match or total >= 70:
+    # Anlamlı ortak kelime tek başına yetmez; ya yüksek isim benzerliği
+    # ya da yakın koordinat ile desteklenmeli. Aksi halde "MANİSA OPEL
+    # SERVİSİ İNCİ OTOMOTİV" gibi false-positive çıkıyor.
+    common_supported = bool(meaningful_common) and (sim >= 0.6 or dist_km < 0.5)
+    if phone_match:
+        confidence = "high"
+    elif total >= 70:
+        confidence = "high"
+    elif common_supported:
         confidence = "high"
     elif total >= 35:
         confidence = "medium"
@@ -144,6 +175,7 @@ def score_candidate(dealer, candidate):
         "dist_km": round(dist_km, 2) if dist_km != float("inf") else None,
         "name_sim": round(sim, 3),
         "common_words": common,
+        "meaningful_common": meaningful_common,
         "phone_match": phone_match,
     }
     return total, confidence, breakdown
