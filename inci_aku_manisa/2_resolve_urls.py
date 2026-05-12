@@ -63,11 +63,25 @@ def wait_for_place(sb, total_timeout=NAV_TIMEOUT_S):
         url = sb.get_current_url()
         if "/maps/place/" in url:
             return True
-        # Liste görünümü: a.hfpxzc ilk sonuç linki
+        # Liste görünümü: sponsorlu OLMAYAN ilk organik sonucu tıkla.
+        # a.hfpxzc hem sponsorlu hem organik linkleri kapsıyor; parent
+        # kartında "Sponsorlu"/"Sponsored" geçenleri atla.
         try:
-            if sb.is_element_visible("a.hfpxzc"):
-                sb.click("a.hfpxzc", timeout=3)
-                # Tıklama sonrası place URL'ine geçişi bekle
+            clicked = sb.execute_script(
+                """
+                const links = Array.from(document.querySelectorAll('a.hfpxzc'));
+                for (const a of links) {
+                    const card = a.closest('[role="article"], div[jsaction]') || a.parentElement;
+                    const txt = ((card && card.innerText) || '').toLowerCase();
+                    if (txt.includes('sponsorlu') || txt.includes('sponsored')) continue;
+                    a.scrollIntoView({block:'center'});
+                    a.click();
+                    return true;
+                }
+                return false;
+                """
+            )
+            if clicked:
                 inner_deadline = time.time() + 6
                 while time.time() < inner_deadline:
                     if "/maps/place/" in sb.get_current_url():
@@ -80,8 +94,12 @@ def wait_for_place(sb, total_timeout=NAV_TIMEOUT_S):
     return "/maps/place/" in sb.get_current_url()
 
 
+# Sayfada "gerçek işletme adı" değil de Google liste/reklam etiketi olan değerler
+_NAME_BLACKLIST = ("Sonuçlar", "Results", "Sponsorlu", "Sponsored", "Reklam")
+
+
 def get_place_name(sb):
-    """İşletme panelinden gerçek adı al. 'Sonuçlar' liste başlığını atla."""
+    """İşletme panelinden gerçek adı al. Liste başlığı / sponsor etiketini atla."""
     try:
         names = sb.execute_script(
             """
@@ -94,8 +112,11 @@ def get_place_name(sb):
             """
         ) or []
         for n in names:
-            if n and n not in ("Sonuçlar", "Results"):
-                return n
+            if not n:
+                continue
+            if any(bad in n for bad in _NAME_BLACKLIST):
+                continue
+            return n
     except Exception:
         pass
     return None
