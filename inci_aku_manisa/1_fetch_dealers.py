@@ -14,11 +14,20 @@ Kullanım:
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 import requests
+import urllib3
+
+# Kurumsal SSL inspection (Fortinet/Zscaler/Palo Alto vb.) MITM yapıyorsa
+# Python sertifika zincirini reddeder. Bu env var'ları boşaltıp warning'i
+# kapatınca requests verify=False ile sessizce geçer.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+os.environ.setdefault("REQUESTS_CA_BUNDLE", "")
+os.environ.setdefault("CURL_CA_BUNDLE", "")
 
 BASE = "https://www.inciaku.com"
 LIST_URL = f"{BASE}/clockwork/surface/bayiler/Get"
@@ -87,7 +96,7 @@ def decode_coord(raw):
 
 def fetch(session, kategori, sehir):
     params = {"kategori": kategori, "sehir": sehir, "ilce": "", "turu": ""}
-    r = session.get(LIST_URL, params=params, headers=HEADERS, timeout=30)
+    r = session.get(LIST_URL, params=params, headers=HEADERS, timeout=30, verify=False)
     r.raise_for_status()
     data = r.json()
     if not isinstance(data, list):
@@ -155,6 +164,7 @@ def main():
     OUT_DIR.mkdir(exist_ok=True)
 
     session = requests.Session()
+    session.verify = False  # kurumsal SSL inspection bypass
     session.get(REFERER, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=30)
 
     all_rows = []
