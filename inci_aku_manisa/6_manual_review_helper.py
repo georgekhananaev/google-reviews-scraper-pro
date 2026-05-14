@@ -64,13 +64,25 @@ def read_csv():
 
 
 def write_csv(rows, delim):
+    """CSV'yi yaz. Excel açıksa dosya locked olur → PermissionError;
+    kullanıcıdan Excel kapatmasını isteyip retry et."""
     if not rows:
         return
     fields = list(rows[0].keys())
-    with CSV_PATH.open("w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fields, delimiter=delim)
-        w.writeheader()
-        w.writerows(rows)
+    while True:
+        try:
+            with CSV_PATH.open("w", encoding="utf-8", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=fields, delimiter=delim)
+                w.writeheader()
+                w.writerows(rows)
+            return
+        except PermissionError:
+            print(f"\n  ⚠ {CSV_PATH.name} yazılamıyor — Excel'de açık olabilir.")
+            try:
+                input("    Excel'i kapat, sonra ENTER'a bas (Ctrl+C ile çık)... ")
+            except (EOFError, KeyboardInterrupt):
+                print("\n  CSV kaydedilemedi, mevcut karar diske yazılmadı.")
+                return
 
 
 def google_search_url(firma_adi, ilce):
