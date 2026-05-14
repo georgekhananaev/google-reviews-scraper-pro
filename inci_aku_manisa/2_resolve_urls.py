@@ -452,7 +452,7 @@ def build_outputs(raw, dealers):
 def write_outputs(auto, manual):
     AUTO_PATH.write_text(json.dumps(auto, ensure_ascii=False, indent=2), encoding="utf-8")
     fields = [
-        "dealer_id", "firma_adi", "cleaned_name", "ilce", "kategori",
+        "dealer_id", "firma_adi", "cleaned_name", "sehir", "ilce", "kategori",
         "google_name", "google_url", "google_phone",
         "score", "match_confidence",
         "name_pts", "dist_pts", "phone_pts", "dist_km", "phone_match",
@@ -467,6 +467,7 @@ def write_outputs(auto, manual):
                 "dealer_id": r["dealer_id"],
                 "firma_adi": r["firma_adi"],
                 "cleaned_name": r["cleaned_name"],
+                "sehir": r.get("sehir") or "",
                 "ilce": r["ilce"] or "",
                 "kategori": r["kategori"] or "",
                 "google_name": r["google_name"] or "",

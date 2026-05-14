@@ -18,12 +18,36 @@ Kullanım:
 
 import argparse
 import csv
+import json
 import sys
 import webbrowser
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent / "data"
 CSV_PATH = DATA_DIR / "manual_review.csv"
+DEALERS_PATH = DATA_DIR / "dealers.json"
+
+
+def load_sehir_lookup():
+    """dealers.json'dan dealer_id veya firma_adi+ilce → sehir map'i.
+    CSV'de eski format kullanılıyorsa (sehir kolonu yok) fallback."""
+    if not DEALERS_PATH.exists():
+        return {}
+    try:
+        dealers = json.loads(DEALERS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    lookup = {}
+    for d in dealers:
+        sehir = d.get("sehir") or ""
+        if not sehir:
+            continue
+        if d.get("id"):
+            lookup[d["id"]] = sehir
+        firma = d.get("firma_adi") or ""
+        ilce = d.get("ilce") or ""
+        lookup[f"{firma}|{ilce}"] = sehir
+    return lookup
 
 
 def read_csv():
@@ -76,6 +100,20 @@ def main():
         print("CSV boş.")
         return
 
+    sehir_lookup = load_sehir_lookup()
+
+    def get_sehir(row):
+        """CSV'de sehir varsa onu, yoksa dealers.json'dan fallback."""
+        s = (row.get("sehir") or "").strip()
+        if s:
+            return s
+        # Önce dealer_id ile dene
+        if row.get("dealer_id") and row["dealer_id"] in sehir_lookup:
+            return sehir_lookup[row["dealer_id"]]
+        # firma_adi + ilce kombinasyonu
+        key = f"{row.get('firma_adi', '')}|{row.get('ilce', '')}"
+        return sehir_lookup.get(key, "?")
+
     # Pending = approved boş veya kafa karıştırıcı bir şey
     def is_pending(r):
         v = (r.get("approved") or "").strip().upper()
@@ -103,7 +141,7 @@ def main():
     for i, row in enumerate(pending, 1):
         print("=" * 88)
         print(f"[{i}/{len(pending)}]  {row.get('firma_adi','?')}")
-        print(f"  İlçe         : {row.get('ilce', '?')}")
+        print(f"  Şehir / İlçe : {get_sehir(row)} / {row.get('ilce', '?')}")
         print(f"  Confidence   : {row.get('match_confidence', '?')}  "
               f"(score={row.get('score', '?')})")
         gn = row.get('google_name') or "?"
