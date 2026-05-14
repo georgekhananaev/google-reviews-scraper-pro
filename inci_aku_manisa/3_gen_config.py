@@ -30,9 +30,9 @@ BASE_CONFIG = {
     "sort_by": "newest",          # newest + stop_threshold için kritik
     "scrape_mode": "new_only",    # mevcut yorumlara dokunma (re-scrape hızlanır)
     "stop_threshold": 2,          # 2 ardışık eşleşen batch → durur (eski 3)
-    "max_reviews": 50,            # bayi başına ilk 50 yorum (akü analizi için yeterli)
-    "max_scroll_attempts": 20,    # üst sınır (eski 50)
-    "scroll_idle_limit": 8,       # boş scroll toleransı (eski 15)
+    "max_reviews": 0,             # 0 = limitsiz, tüm yorumlar
+    "max_scroll_attempts": 100,   # tüm yorumlar için bol üst sınır
+    "scroll_idle_limit": 12,      # boş scroll toleransı
     "convert_dates": True,
     "download_images": False,
     "use_mongodb": False,
