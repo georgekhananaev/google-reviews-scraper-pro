@@ -24,15 +24,17 @@ AUTO_PATH = DATA_DIR / "urls_auto.json"
 MANUAL_CSV_PATH = DATA_DIR / "manual_review.csv"
 OUT_PATH = ROOT / "inci_aku_config.yaml"
 
-# Repo defaults — sade tutuyoruz, sadece akü bayilerini analiz için lazım olanlar.
+# Repo defaults — hız için sıkılaştırılmış ayarlar.
 BASE_CONFIG = {
     "headless": True,
-    "sort_by": "newest",
-    "scrape_mode": "update",
-    "stop_threshold": 3,
-    "max_reviews": 0,
+    "sort_by": "newest",          # newest + stop_threshold için kritik
+    "scrape_mode": "new_only",    # mevcut yorumlara dokunma (re-scrape hızlanır)
+    "stop_threshold": 2,          # 2 ardışık eşleşen batch → durur (eski 3)
+    "max_reviews": 50,            # bayi başına ilk 50 yorum (akü analizi için yeterli)
+    "max_scroll_attempts": 20,    # üst sınır (eski 50)
+    "scroll_idle_limit": 8,       # boş scroll toleransı (eski 15)
     "convert_dates": True,
-    "download_images": False,   # akü analizi için resme gerek yok
+    "download_images": False,
     "use_mongodb": False,
     "use_s3": False,
     "backup_to_json": False,
