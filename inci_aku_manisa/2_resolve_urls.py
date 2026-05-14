@@ -489,6 +489,15 @@ def write_outputs(auto, manual):
 # ---------------------------------------------------------------------------
 
 def main():
+    # Windows cp1254 console'a Türkçe karakter/Unicode (→, ✗) yazımı için
+    # stdout/stderr'i UTF-8'e zorla. PowerShell Start-Job subprocess'inde
+    # default cp1254 oluyor; bu olmadan UnicodeEncodeError patlatıyor.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--headless", action="store_true")
     ap.add_argument("--limit", type=int, default=0,

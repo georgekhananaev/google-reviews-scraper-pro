@@ -39,6 +39,11 @@ def _find(name):
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     config_path = _find(CONFIG_NAME)
     if not config_path:
         print(f"HATA: {CONFIG_NAME} bulunamadı.", file=sys.stderr)

@@ -125,6 +125,11 @@ def build_business_entry(rec):
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     auto = load_auto()
     manual = load_manual_approved()
 

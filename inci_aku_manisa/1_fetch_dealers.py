@@ -151,6 +151,11 @@ def parse_args():
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     args = parse_args()
     if args.all:
         cities = TR_CITIES_81

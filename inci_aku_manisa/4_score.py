@@ -206,6 +206,11 @@ def _find(name, override=None):
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", help=f"Default: {CONFIG_NAME} (otomatik aranır)")
     ap.add_argument("--db", help="Default: config içindeki db_path (otomatik aranır)")
