@@ -394,13 +394,32 @@ def resolve_one(sb, dealer):
 # ---------------------------------------------------------------------------
 
 def load_raw():
-    if RAW_PATH.exists():
-        return json.loads(RAW_PATH.read_text(encoding="utf-8"))
-    return {}
+    """Tüm shard dosyalarını ve ana raw dosyasını birleştirip döner.
+
+    Paralel job'lar her biri ayrı bir shard dosyasına yazar
+    (urls_resolved_raw_part_<start>_<end>.json). Build aşaması hepsini
+    otomatik birleştirir.
+    """
+    out = {}
+    for p in sorted(DATA_DIR.glob("urls_resolved_raw*.json")):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"  [warn] {p.name} okunamadı: {e}")
+            continue
+        out.update(data)
+    return out
 
 
-def save_raw(raw):
-    RAW_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+def shard_path(start, end):
+    """Bir shard'ın yazacağı dosya. start=end=None ise eski tek dosya yolu."""
+    if start is None and end is None:
+        return RAW_PATH
+    return DATA_DIR / f"urls_resolved_raw_part_{start}_{end}.json"
+
+
+def save_raw_to(path, raw):
+    path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def build_outputs(raw, dealers):
@@ -472,9 +491,17 @@ def write_outputs(auto, manual):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--headless", action="store_true")
-    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--limit", type=int, default=0,
+                    help="ilk N bayi (test için). --start/--end ile birleştirilemez.")
+    ap.add_argument("--start", type=int, default=None,
+                    help="Slice başlangıcı (paralel job için)")
+    ap.add_argument("--end", type=int, default=None,
+                    help="Slice bitişi (paralel job için)")
     ap.add_argument("--sleep", type=float, default=2.5)
     ap.add_argument("--uc", action="store_true", help="undetected-chromedriver modu")
+    ap.add_argument("--no-build", action="store_true",
+                    help="Sadece raw shard'ı yaz, auto/manual üretme. "
+                         "Paralel job'larda son node bunu yapmasın.")
     args = ap.parse_args()
 
     if not DEALERS_PATH.exists():
@@ -482,12 +509,25 @@ def main():
         sys.exit(1)
 
     dealers = json.loads(DEALERS_PATH.read_text(encoding="utf-8"))
+    total = len(dealers)
     if args.limit:
         dealers = dealers[:args.limit]
+    if args.start is not None or args.end is not None:
+        s = args.start or 0
+        e = args.end if args.end is not None else len(dealers)
+        dealers = dealers[s:e]
+        print(f"Slice: dealers[{s}:{e}] ({len(dealers)} bayi, toplam {total})")
 
-    raw = load_raw()
-    todo = [d for d in dealers if dealer_key(d) not in raw]
-    print(f"Toplam: {len(dealers)} | önceden çözülmüş: {len(raw)} | yapılacak: {len(todo)}")
+    out_path = shard_path(args.start, args.end)
+    print(f"Shard çıktısı: {out_path.name}")
+
+    raw_global = load_raw()  # tüm shard'ları birleştir (resume için)
+    raw_local = (
+        json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() else {}
+    )
+    todo = [d for d in dealers if dealer_key(d) not in raw_global]
+    print(f"Bu slice: {len(dealers)} | tüm shard'larda çözülmüş: {len(raw_global)} | "
+          f"yapılacak: {len(todo)}")
 
     if todo:
         with SB(uc=args.uc, locale="tr", headless=args.headless) as sb:
@@ -504,19 +544,27 @@ def main():
                         f"phone_match={bd.get('phone_match')}  "
                         f"mode={result.get('mode')}"
                     )
-                    raw[dealer_key(d)] = result
+                    raw_local[dealer_key(d)] = result
                 except Exception as e:
                     print(f"    ✗ HATA: {e}")
-                    raw[dealer_key(d)] = {
+                    raw_local[dealer_key(d)] = {
                         "google_url": None, "google_name": None,
                         "score": 0, "confidence": "low", "breakdown": {},
                         "error": str(e),
                     }
-                save_raw(raw)
+                save_raw_to(out_path, raw_local)
                 if i < len(todo):
                     time.sleep(args.sleep)
 
-    auto, manual = build_outputs(raw, dealers)
+    if args.no_build:
+        print(f"\n[shard done] {len(raw_local)} kayıt → {out_path}")
+        print("auto/manual üretilmedi (--no-build). Tüm shard'lar bittiğinde "
+              "--no-build'siz veya gen_config çalıştır.")
+        return
+
+    # Tüm shard'ları + bu shard'ı birleştir, auto/manual üret
+    raw_all = load_raw()
+    auto, manual = build_outputs(raw_all, json.loads(DEALERS_PATH.read_text(encoding="utf-8")))
     write_outputs(auto, manual)
     print(f"\n[done]")
     print(f"  auto (high confidence)  : {len(auto):3d} → {AUTO_PATH}")
