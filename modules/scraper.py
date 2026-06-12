@@ -247,6 +247,8 @@ class GoogleReviewsScraper:
         db_path = config.get("db_path", "reviews.db")
         self.review_db = ReviewDB(db_path)
         self._selector_health: SelectorHealth | None = None
+        self.place_id = None
+        self.total_reviews = None
 
     def _record_selector(self, selector: str, outcome: str) -> None:
         """Telemetry helper — always safe to call."""
@@ -1481,6 +1483,7 @@ class GoogleReviewsScraper:
             place_id = self.review_db.upsert_place(
                 place_id, place_name, url, resolved_url, lat_f, lng_f
             )
+            self.place_id = place_id
             session_id = self.review_db.start_session(place_id, sort_by)
             log.info(f"Registered place: {place_id} ({place_name})")
             self._selector_health = SelectorHealth(self.review_db.backend, session_id)
@@ -1825,6 +1828,7 @@ class GoogleReviewsScraper:
             total_found = sum(batch_stats.values())
             parse_errors = batch_stats.get("parse_errors", 0)
             real_found = total_found - parse_errors
+            self.total_reviews = real_found
             if session_id:
                 # Session status: "empty" if zero reviews extracted,
                 # "degraded" if >30% of cards failed parsing, else "completed".
