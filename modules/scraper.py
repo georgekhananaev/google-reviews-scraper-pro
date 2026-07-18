@@ -911,7 +911,7 @@ class GoogleReviewsScraper:
                                 continue
 
                             # Positive detection for sort buttons
-                            sort_keywords = ["sort", "Sort", "SORT", "סידור", "เรียง", "排序", "trier", "ordenar", "sortieren"]
+                            sort_keywords = ["sort", "Sort", "SORT", "Ordina", "סידור", "เรียง", "排序", "trier", "ordenar", "sortieren"]
                             has_sort_keyword = any(keyword in button_text or keyword in button_aria 
                                                  for keyword in sort_keywords)
                             
@@ -961,7 +961,7 @@ class GoogleReviewsScraper:
 
             # If still no button found, try XPath approach with keywords
             if not sort_button:
-                xpath_terms = ["sort", "Sort", "סדר", "סידור", "เรียง", "排序", "Trier", "Ordenar", "Sortieren"]
+                xpath_terms = ["sort", "Sort", "Ordina", "סדר", "סידור", "เรียง", "排序", "Trier", "Ordenar", "Sortieren"]
                 for term in xpath_terms:
                     try:
                         xpath = f"//*[contains(text(), '{term}') or contains(@aria-label, '{term}')]"
