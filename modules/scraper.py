@@ -362,11 +362,101 @@ class GoogleReviewsScraper:
         log.info("SeleniumBase UC driver setup completed successfully")
         return driver
 
+    def handle_google_consent(self, driver: Chrome) -> bool:
+        """
+        Handle Google consent page (consent.google.com) if redirected there.
+        This is a full-page redirect, not just an overlay dialog.
+        Returns True if consent was handled successfully.
+        """
+        try:
+            current_url = driver.current_url.lower()
+            if "consent.google.com" not in current_url:
+                return False
+
+            log.info("Detected Google consent page, attempting to accept...")
+
+            # Common "Accept all" button texts across languages
+            consent_texts = [
+                "Accetta tutto", "Accept all", "Accepter tout",
+                "Alle akzeptieren", "Aceptar todo", "Aceitar tudo",
+                "Zaakceptuj wszystko", "Принять все", "全て受け入れる",
+                "全部接受", "全部接受", "모두 수락", "ยอมรับทั้งหมด",
+                "Tümünü kabul et", "Chấp nhận tất cả", "Elfogad mindent",
+                "Terima semua", "Prihvatiti sve",
+            ]
+
+            for text in consent_texts:
+                try:
+                    xpath = (
+                        f'//button[.//span[contains(text(), "{text}")]]'
+                        f' | //button[contains(text(), "{text}")]'
+                    )
+                    buttons = driver.find_elements(By.XPATH, xpath)
+                    for btn in buttons:
+                        try:
+                            if btn.is_displayed():
+                                btn.click()
+                                log.info(f"Clicked consent button with text: {text}")
+                                time.sleep(2)
+                                return True
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+
+            # Fallback: try by class pattern from user report
+            try:
+                buttons = driver.find_elements(
+                    By.CSS_SELECTOR, 'button[jsname="b3VHJd"]'
+                )
+                for btn in buttons:
+                    try:
+                        if btn.is_displayed():
+                            btn.click()
+                            log.info("Clicked consent button by jsname selector")
+                            time.sleep(2)
+                            return True
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+            # Fallback: any button in a consent form
+            try:
+                buttons = driver.find_elements(
+                    By.CSS_SELECTOR, 'form[action*="consent"] button, button.UywwFc-LgbsSe'
+                )
+                for btn in buttons:
+                    try:
+                        if btn.is_displayed():
+                            btn.click()
+                            log.info("Clicked consent form button (fallback)")
+                            time.sleep(2)
+                            return True
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+            log.warning("Could not find consent button on Google consent page")
+            return False
+        except Exception as e:
+            log.debug(f"Error handling Google consent: {e}")
+            return False
+
     def dismiss_cookies(self, driver: Chrome):
         """
         Dismiss cookie consent dialogs if present.
+        Also handles full-page consent.google.com redirect.
         Handles stale element references by re-finding elements if needed.
         """
+        # First check for full-page consent.google.com redirect
+        try:
+            if "consent.google.com" in (driver.current_url or "").lower():
+                return self.handle_google_consent(driver)
+        except Exception:
+            pass
+
         try:
             # Use WebDriverWait with expected_conditions to handle stale elements
             WebDriverWait(driver, 3).until(
@@ -414,7 +504,9 @@ class GoogleReviewsScraper:
         # load it briefly to get the title
         try:
             driver.get(url)
-            time.sleep(4)
+            time.sleep(2)
+            self.handle_google_consent(driver)
+            time.sleep(2)
             # Get the page title - usually "Place Name - Google Maps"
             title = driver.title or ""
             name = title.replace(" - Google Maps", "").strip()
