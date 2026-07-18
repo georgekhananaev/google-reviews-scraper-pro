@@ -5,6 +5,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
+from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webelement import WebElement
 
 from modules.sub_rating_labels import canonicalize_category
@@ -36,9 +37,13 @@ class RawReview:
 
     # CSS selector candidates — tried in order, first match wins.
     MORE_BTN = (
+        "button.w8nwRe.kyuRq",
         "button.kyuRq",
+        "button.w8nwRe",
         'button[jsaction*="expandReview"]',
-        'button[aria-expanded="false"][jsaction*="review" i]',
+        'button[jsaction*="LVYFw"]',
+        'button[jsaction*="review" i]',
+        'button[aria-expanded="false"]',
     )
     LIKE_BTN = 'button[jsaction*="toggleThumbsUp" i]'
     PHOTO_BTN_SELECTORS = (
@@ -76,18 +81,50 @@ class RawReview:
         'div[class*="rating" i][aria-label*="/5" i]',
     )
 
+    # "More" button texts in various languages used as XPath fallback
+    _MORE_TEXTS = (
+        "Altro", "More", "Plus", "Mehr", "Más", "Mais",
+        "Показать больше", "もっと見る", "更多", "더보기",
+        "เพิ่มเติม", "Daha fazla", "Xem thêm", "Więcej",
+        "Meer", "Mer", "En savoir plus",
+    )
+
     @classmethod
-    def from_card(cls, card: WebElement) -> "RawReview":
-        """Factory method to create a RawReview from a WebElement."""
+    def _click_expand(cls, card: WebElement) -> None:
+        """Try to expand truncated review text using selectors first, then XPath text match."""
+        # Strategy 1: CSS selectors
         for sel in cls.MORE_BTN:
             buttons = try_find(card, sel, all=True)
-            if buttons:
+            if not buttons:
+                continue
+            clicked = False
+            for b in buttons:
+                try:
+                    b.click()
+                    clicked = True
+                except Exception:
+                    pass
+            if clicked:
+                return
+
+        # Strategy 2: XPath text match (catches unknown/rotated CSS classes)
+        for text in cls._MORE_TEXTS:
+            try:
+                xpath = f'.//button[.//span[contains(text(), "{text}")]] | .//button[contains(text(), "{text}")]'
+                buttons = card.find_elements(By.XPATH, xpath)
                 for b in buttons:
                     try:
                         b.click()
+                        return
                     except Exception:
                         pass
-                break
+            except Exception:
+                pass
+
+    @classmethod
+    def from_card(cls, card: WebElement) -> "RawReview":
+        """Factory method to create a RawReview from a WebElement."""
+        cls._click_expand(card)
 
         rid = card.get_attribute("data-review-id") or ""
         author = first_text(card, 'div[class*="d4r55"]')
