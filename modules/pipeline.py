@@ -107,7 +107,7 @@ class S3Task(SyncTask):
             # Review images
             for filename in review.get("local_images", []):
                 if filename and filename not in files_to_upload:
-                    base = self._image_dir / place_id if place_id else self._image_dir
+                    base = self._image_dir / ImageHandler._fs_safe(place_id) if place_id else self._image_dir
                     local_path = base / "reviews" / filename
                     if local_path.exists():
                         files_to_upload[filename] = (local_path, False)
@@ -115,7 +115,7 @@ class S3Task(SyncTask):
             # Profile picture
             pp = review.get("local_profile_picture")
             if pp and pp not in files_to_upload:
-                base = self._image_dir / place_id if place_id else self._image_dir
+                base = self._image_dir / ImageHandler._fs_safe(place_id) if place_id else self._image_dir
                 local_path = base / "profiles" / pp
                 if local_path.exists():
                     files_to_upload[pp] = (local_path, True)
