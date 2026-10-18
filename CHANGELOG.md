@@ -4,7 +4,11 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+### Added
+- **`place_id` in job responses** (PR #27 by @sajjad-git) — `GET /jobs/{job_id}` and `GET /jobs` now return the scraped place's `place_id`, so clients can go straight to `/reviews/{place_id}` and `/places/{place_id}` without matching URLs. Also set when the scrape fails after the place was registered.
+
 ### Fixed
+- **`reviews_count` in job responses was always null** (PR #27 by @sajjad-git) — the job manager read `scraper.total_reviews`, which nothing ever set. It now holds the number of reviews processed in the run (new + updated + restored + unchanged, parse errors excluded). Tests added in `tests/test_job_manager.py`.
 - **Reviews tab rejected when the place name contains a tab word** (issue #25, PR #26 by @sajjad-git) — Google puts the place name in every tab's aria-label, so "Reviews for Caledon Community Services" lost its match to the "services" penalty and the scraper fell back to clicking any element with a review word. The penalty is now skipped when the same field already has a review keyword, and the place name (from the page title) is removed from the aria-label before scoring, so names like "Davis Diner" (contains "avis") can't make a hidden Menu or Overview tab look like Reviews either. Six regression tests added.
 - **Sorting in the Italian UI** (PR #30 by @lollo03) — the Italian sort chip ("Ordina recensioni") had no selector, so a generic fallback picked the "Informazioni" button instead and sorting failed. Added the `Ordina` selector next to the other languages, plus the keyword the PR added so the button passes the sort-keyword check.
 

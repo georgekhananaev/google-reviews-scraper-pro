@@ -247,8 +247,8 @@ class GoogleReviewsScraper:
         db_path = config.get("db_path", "reviews.db")
         self.review_db = ReviewDB(db_path)
         self._selector_health: SelectorHealth | None = None
-        self.place_id = None
-        self.total_reviews = None
+        self.place_id: str | None = None
+        self.total_reviews: int | None = None
 
     def _record_selector(self, selector: str, outcome: str) -> None:
         """Telemetry helper — always safe to call."""
