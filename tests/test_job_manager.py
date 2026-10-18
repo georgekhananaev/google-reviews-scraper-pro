@@ -57,7 +57,10 @@ def test_failed_job_still_reports_place_id(manager):
     assert data["reviews_count"] is None
 
 
-def test_job_response_accepts_place_id(manager):
+def test_job_response_accepts_place_id(manager, tmp_path, monkeypatch):
+    # Importing api_server loads config.yaml from the working directory and
+    # writes a default one if missing, so import it from an empty temp dir.
+    monkeypatch.chdir(tmp_path)
     from api_server import JobResponse
 
     StubScraper.result = True
