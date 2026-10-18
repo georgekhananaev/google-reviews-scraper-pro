@@ -30,6 +30,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
 
+from modules.browser_profile import PROFILE_LOCK, is_signed_in, prepare_profile_dir, profile_dir
 from modules.date_filter import DateFilter, EARLY_STOP_CONSECUTIVE
 from modules.image_handler import place_image_dir
 from modules.models import RawReview
@@ -326,6 +327,14 @@ class GoogleReviewsScraper:
         # Determine if we're running in a container
         in_container = os.environ.get('CHROME_BIN') is not None
 
+        # A signed-in profile replaces incognito mode (incognito ignores it).
+        profile = profile_dir(self.config)
+        if profile:
+            profile_option = {"user_data_dir": str(prepare_profile_dir(profile))}
+            log.info("Using the browser profile from browser_profile_dir")
+        else:
+            profile_option = {}
+
         if in_container:
             chrome_binary = os.environ.get('CHROME_BIN')
             log.info(f"Container environment detected")
@@ -338,7 +347,8 @@ class GoogleReviewsScraper:
                         uc=True,
                         headless=headless,
                         binary_location=chrome_binary,
-                        page_load_strategy="normal"
+                        page_load_strategy="normal",
+                        **profile_option,
                     )
                     log.info("Successfully created SeleniumBase UC driver with custom binary")
                 except Exception as e:
@@ -347,14 +357,16 @@ class GoogleReviewsScraper:
                     driver = Driver(
                         uc=True,
                         headless=headless,
-                        page_load_strategy="normal"
+                        page_load_strategy="normal",
+                        **profile_option,
                     )
                     log.info("Successfully created SeleniumBase UC driver with defaults")
             else:
                 driver = Driver(
                     uc=True,
                     headless=headless,
-                    page_load_strategy="normal"
+                    page_load_strategy="normal",
+                    **profile_option,
                 )
                 log.info("Successfully created SeleniumBase UC driver")
         else:
@@ -365,7 +377,7 @@ class GoogleReviewsScraper:
                     uc=True,
                     headless=headless,
                     page_load_strategy="normal",
-                    incognito=True  # Use incognito mode for better stealth
+                    **(profile_option or {"incognito": True}),  # incognito for better stealth
                 )
                 log.info("Successfully created SeleniumBase UC driver")
             except Exception as e:
@@ -1379,7 +1391,22 @@ class GoogleReviewsScraper:
         On `_DriverSessionLost`, already-captured reviews are preserved in
         SQLite (upsert is idempotent by `(review_id, place_id)`), the session
         is marked `partial`, and a fresh driver is launched to retry.
+
+        With a browser profile configured, scrapes in this process take turns:
+        Chrome refuses to open a profile that another Chrome is using.
         """
+        if profile_dir(self.config) is None:
+            return self._scrape_with_retries()
+        if not PROFILE_LOCK.acquire(blocking=False):
+            log.info("Waiting for the browser profile - another scrape is using it")
+            PROFILE_LOCK.acquire()
+        try:
+            return self._scrape_with_retries()
+        finally:
+            PROFILE_LOCK.release()
+
+    def _scrape_with_retries(self):
+        """Run `_scrape_once()`, retrying after a lost driver session."""
         resilience = self.config.get("resilience", {}) or {}
         max_retries = int(resilience.get("retry_on_session_death", 1))
         backoff_base = int(resilience.get("retry_backoff_base_seconds", 3))
@@ -1448,6 +1475,18 @@ class GoogleReviewsScraper:
 
             # Navigate using limited-view bypass (search-based navigation)
             self.navigate_to_place(driver, url, wait)
+
+            # Only whether a sign-in exists is logged, never account details.
+            if profile_dir(self.config) is not None:
+                try:
+                    signed_in = is_signed_in(driver.get_cookies())
+                except WebDriverException:
+                    signed_in = False
+                if signed_in:
+                    log.info("Browser profile is signed in to Google")
+                else:
+                    log.warning("Browser profile is not signed in to Google, so reviews may be "
+                                "capped. Run: python start.py browser-login")
 
             # Extract place ID and register in database
             resolved_url = driver.current_url

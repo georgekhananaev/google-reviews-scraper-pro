@@ -519,6 +519,36 @@ def _run_health(config, args):
         sys.exit(1)
 
 
+def _run_browser_login(config, args):
+    """Sign a Chrome profile in to Google so scrapes get the full review list."""
+    import sys
+    from modules.browser_profile import (
+        find_chrome, open_login_window, prepare_profile_dir, profile_dir, profile_signed_in,
+    )
+
+    path = profile_dir({"browser_profile_dir": args.profile_dir or config.get("browser_profile_dir")})
+    if path is None:
+        print("No profile folder. Set browser_profile_dir in config.yaml or pass --profile-dir.")
+        sys.exit(2)
+    prepare_profile_dir(path)
+
+    if not args.check:
+        chrome = find_chrome()
+        if not chrome:
+            print("Chrome not found. Install Google Chrome or set CHROME_BIN to its path.")
+            sys.exit(2)
+        print("A Chrome window opens on Google's sign-in page.")
+        print("Sign in with a Google account used only for scraping (not your main one),")
+        print("then quit that Chrome completely (Cmd+Q on macOS, close all windows elsewhere).")
+        open_login_window(chrome, path)
+
+    if profile_signed_in(path):
+        print("Profile is signed in to Google. Scrapes using browser_profile_dir now run signed in.")
+    else:
+        print("Profile is NOT signed in to Google. Run: python start.py browser-login")
+        sys.exit(1)
+
+
 def _run_logs(config, args):
     """Run the logs viewer command."""
     import sys
@@ -610,6 +640,7 @@ def main():
         "selector-health": _run_selector_health,
         "db-vacuum": _run_db_vacuum,
         "health": _run_health,
+        "browser-login": _run_browser_login,
     }
 
     handler = commands.get(args.command)

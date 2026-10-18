@@ -302,6 +302,23 @@ def _build_health_parser(sub: argparse._SubParsersAction) -> None:
     )
 
 
+def _build_browser_login_parser(sub: argparse._SubParsersAction) -> None:
+    """Build the 'browser-login' subcommand — sign a Chrome profile in to Google."""
+    sp = sub.add_parser(
+        "browser-login",
+        help="Open Chrome on browser_profile_dir to sign in to Google",
+    )
+    _add_common_args(sp)
+    sp.add_argument(
+        "--profile-dir", type=str, default=None,
+        help="profile folder (overrides browser_profile_dir in config)",
+    )
+    sp.add_argument(
+        "--check", action="store_true",
+        help="only report whether the profile is signed in",
+    )
+
+
 def _build_logs_parser(sub: argparse._SubParsersAction) -> None:
     """Build the 'logs' subcommand."""
     sp = sub.add_parser("logs", help="View structured JSON log files")
@@ -336,6 +353,7 @@ def parse_arguments():
     _build_selector_health_parser(sub)
     _build_db_vacuum_parser(sub)
     _build_health_parser(sub)
+    _build_browser_login_parser(sub)
 
     # Accept opt-in date-range filter flags at both subcommand and top level
     for parent in (sub.choices.get("scrape"), ap):

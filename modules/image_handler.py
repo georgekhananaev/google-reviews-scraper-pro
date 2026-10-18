@@ -13,6 +13,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from modules.browser_profile import is_auth_cookie
 from modules.s3_handler import S3Handler
 
 # Logger
@@ -166,11 +167,14 @@ class ImageHandler:
 
         Called by the scraper after navigation completes. Without these
         cookies, newer googleusercontent tokens (ABOP9p... prefix) return
-        403 for all downloads.
+        403 for all downloads. Google sign-in cookies (from a signed-in
+        browser profile) are never forwarded.
         """
         if not cookies:
             return
         for c in cookies:
+            if is_auth_cookie(c.get("name", "")):
+                continue
             try:
                 self._session.cookies.set(
                     c["name"], c["value"],

@@ -21,6 +21,9 @@ DEFAULT_CONFIG = {
     "urls": [],
     "businesses": [],
     "headless": True,
+    # Chrome profile folder signed in to Google (empty = off). Signed-out
+    # browsers only get the first few reviews. See `start.py browser-login`.
+    "browser_profile_dir": "",
     "sort_by": "relevance",
     "scrape_mode": "update",
     "stop_on_match": False,
