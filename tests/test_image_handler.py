@@ -6,9 +6,14 @@ use '_' instead. Folders named after the raw id by older versions are
 renamed once so their images are kept.
 """
 
+import os
+
 import pytest
 
 from modules.image_handler import ImageHandler, place_image_dir
+
+# Folders named after raw ids (with ':') can only exist off Windows.
+skip_on_windows = pytest.mark.skipif(os.name == "nt", reason="':' is not allowed in Windows folder names")
 
 
 @pytest.mark.parametrize("place_id, folder", [
@@ -23,6 +28,7 @@ def test_folder_name_has_no_windows_reserved_chars(tmp_path, place_id, folder):
     assert place_image_dir(tmp_path, place_id) == tmp_path / folder
 
 
+@skip_on_windows
 def test_legacy_folder_is_renamed(tmp_path):
     legacy = tmp_path / "0x30e29edb0244829f:0"
     (legacy / "profiles").mkdir(parents=True)
@@ -35,6 +41,7 @@ def test_legacy_folder_is_renamed(tmp_path):
     assert not legacy.exists()
 
 
+@skip_on_windows
 def test_existing_new_folder_wins_over_legacy(tmp_path):
     legacy = tmp_path / "cid:1"
     legacy.mkdir()
@@ -54,6 +61,7 @@ def test_set_place_id_uses_safe_folder(tmp_path):
     assert handler.review_dir.is_dir()
 
 
+@skip_on_windows
 def test_traversal_in_place_id_stays_inside_image_dir(tmp_path):
     image_dir = tmp_path / "images"
     (image_dir / "cid:..").mkdir(parents=True)  # left behind by an older version

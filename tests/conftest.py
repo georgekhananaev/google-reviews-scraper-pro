@@ -9,9 +9,11 @@ from pathlib import Path
 
 @pytest.fixture
 def config():
-    """Load configuration from config.yaml"""
+    """Load configuration from config.yaml (gitignored; tests that need it skip without it)."""
     config_path = Path(__file__).parent.parent / "config.yaml"
-    with open(config_path, 'r') as f:
+    if not config_path.exists():
+        pytest.skip("config.yaml not found - MongoDB/S3 connection tests need a local config")
+    with open(config_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
 
 
