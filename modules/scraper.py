@@ -603,17 +603,25 @@ class GoogleReviewsScraper:
 
         score = 0.0
 
+        aria_has_review = _text_contains_any(aria_label, REVIEW_WORDS)
+        text_has_review = _text_contains_any(tab_text, REVIEW_WORDS)
+
         # Strongest signals — explicit semantic match.
-        if _text_contains_any(aria_label, REVIEW_WORDS):
+        if aria_has_review:
             score += 1.5
-        if _text_contains_any(tab_text, REVIEW_WORDS):
+        if text_has_review:
             score += 1.0
 
         # Penalize non-review labels — prevents Menu/Overview misclassification
         # when they happen to sit at data-tab-index="1".
-        if _text_contains_any(aria_label, NON_REVIEW_TAB_WORDS):
+        #
+        # IMPORTANT: only penalize when no review keyword matched. Aria-labels
+        # embed the place name ("Reviews for Caledon Community Services"), and
+        # place names can contain penalty words like "services" or "menu",
+        # which would wrongly cancel out a genuine match.
+        if not aria_has_review and _text_contains_any(aria_label, NON_REVIEW_TAB_WORDS):
             score -= 1.5
-        if _text_contains_any(tab_text, NON_REVIEW_TAB_WORDS):
+        if not text_has_review and _text_contains_any(tab_text, NON_REVIEW_TAB_WORDS):
             score -= 1.0
 
         # Weak positive: index + keyword already scored above; bare index
