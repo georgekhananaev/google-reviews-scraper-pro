@@ -41,6 +41,8 @@ log = logging.getLogger("scraper")
 
 # CSS Selectors
 PANE_SEL = 'div[role="main"] div.m6QErb.DxyBCb.kA9KIf.dS8AEf'
+# URL fragment Google adds while the Reviews pane is open.
+REVIEWS_URL_MARKER = "!9m1!1b1"
 CARD_SEL = "div[data-review-id]"
 COOKIE_BTN = ('button[aria-label*="Accept" i],'
               'button[jsname="hZCF7e"],'
@@ -207,6 +209,14 @@ NON_REVIEW_TAB_WORDS = {
     "menukaart", "overzicht", "foto's", "producten",
     # Vietnamese
     "thực đơn", "tổng quan", "ảnh", "sản phẩm",
+}
+
+# Words that name the sort control, lower-case. "sort" also covers sortieren,
+# sortuj, sortera, sorteren and similar.
+SORT_WORDS = {
+    "sort", "ordina", "trier", "ordenar", "סידור", "סדר", "מיון", "เรียง",
+    "排序", "並べ替え", "정렬", "сортир", "sırala", "sắp xếp", "urutkan",
+    "ترتيب", "järjestä", "ταξινόμ", "seřadit", "rendez",
 }
 
 
@@ -771,8 +781,9 @@ class GoogleReviewsScraper:
         if time.time() <= end_time:
             for language_keyword in REVIEW_WORDS:
                 try:
-                    # Try XPath contains text
-                    xpath = f"//*[contains(text(), '{language_keyword}')]"
+                    # Only real tabs: clicking any element with a review word
+                    # can open "Write a review" or a sign-in prompt.
+                    xpath = f"//*[@role='tab'][contains(., '{language_keyword}')]"
                     elements = driver.find_elements(By.XPATH, xpath)
 
                     for element in elements:
@@ -804,7 +815,7 @@ class GoogleReviewsScraper:
                         new_url = f"{parts[0]}/place/{parts[1].split('/')[0]}/reviews?hl={lang_code}"
                         driver.get(new_url)
                         time.sleep(3)  # Increased wait time for page load
-                        if "review" in driver.current_url.lower():
+                        if self.verify_reviews_tab_clicked(driver):
                             log.info("Navigated directly to reviews page via URL")
                             # Extra wait for reviews to render after URL navigation
                             time.sleep(2)
@@ -816,7 +827,7 @@ class GoogleReviewsScraper:
                 new_url = f"{parts[0]}/place/{parts[1].split('/')[0]}/reviews"
                 driver.get(new_url)
                 time.sleep(3)  # Increased wait time for page load
-                if "review" in driver.current_url.lower():
+                if self.verify_reviews_tab_clicked(driver):
                     log.info("Navigated directly to reviews page via URL")
                     # Extra wait for reviews to render after URL navigation
                     time.sleep(2)
@@ -829,43 +840,45 @@ class GoogleReviewsScraper:
 
     def verify_reviews_tab_clicked(self, driver: Chrome) -> bool:
         """
-        Verify that the reviews tab was successfully clicked by checking for
-        characteristic elements that appear on the reviews page.
+        True only when the Reviews tab is the selected tab, or the URL carries
+        Google's reviews-pane marker (!9m1!1b1). Layouts without a tab bar
+        count as reviews when review cards are present.
+
+        Selectors such as review cards or star ratings are not enough: the
+        Overview tab shows those too (issue #25).
         """
         try:
-            # Common elements that appear when reviews tab is active
-            verification_selectors = [
-                # Reviews container
-                'div.m6QErb.DxyBCb.kA9KIf.dS8AEf',
-
-                # Review cards
-                'div[data-review-id]',
-
-                # Sort button (usually appears with reviews)
-                'button[aria-label*="Sort" i]',
-
-                # Review rating elements
-                'span[role="img"][aria-label*="star" i]',
-
-                # Other indicators
-                'div.m6QErb div.jftiEf',
-                '.HlvSq'
-            ]
-
-            # Check if any verification selector is present
-            for selector in verification_selectors:
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                if elements and len(elements) > 0:
-                    return True
-
-            # URL check - if "review" appears in the URL
-            if "review" in driver.current_url.lower():
+            if REVIEWS_URL_MARKER in (driver.current_url or ""):
                 return True
-
+            tabs = driver.find_elements(By.CSS_SELECTOR, '[role="tab"]')
+            selected = [t for t in tabs if (t.get_attribute("aria-selected") or "").lower() == "true"]
+            if selected:
+                return any(self.is_reviews_tab(t) for t in selected)
+            if not tabs:
+                return bool(driver.find_elements(By.CSS_SELECTOR, CARD_SEL))
             return False
         except Exception as e:
             log.debug(f"Error verifying reviews tab click: {e}")
             return False
+
+    def _is_sort_button(self, element: WebElement) -> bool:
+        """
+        Accept only a visible control in the place panel that carries the sort
+        dropdown class or names sorting in its text or aria-label. The place
+        name is removed first ("Beach Resort" contains "sort").
+        """
+        if not (element.is_displayed() and element.is_enabled()):
+            return False
+        if element.find_elements(By.XPATH, "ancestor::div[@data-review-id]"):
+            return False
+        if not element.find_elements(By.XPATH, "ancestor::div[@role='main']"):
+            return False
+        if "HQzyZ" in (element.get_attribute("class") or ""):
+            return True
+        label = f"{element.text or ''} {element.get_attribute('aria-label') or ''}".lower()
+        if self._place_name:
+            label = label.replace(self._place_name.lower(), " ")
+        return _text_contains_any(label, SORT_WORDS)
 
     def set_sort(self, driver: Chrome, method: str):
         """
@@ -906,124 +919,38 @@ class GoogleReviewsScraper:
                 'div.m6QErb div.XiKgde button'
             ]
 
-            # Attempt to find the sort button
+            # Attempt to find the sort button. Every candidate must pass
+            # _is_sort_button(): clicking an unrelated button (the rating
+            # "info" button, a review's action menu) can replace the list.
             sort_button = None
-
-            # Try each selector
             for selector in sort_button_selectors:
                 try:
-                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                    for element in elements:
+                    for element in driver.find_elements(By.CSS_SELECTOR, selector):
                         try:
-                            # Skip invisible/disabled elements
-                            if not element.is_displayed() or not element.is_enabled():
-                                continue
-
-                            # Get button text and attributes for verification
-                            button_text = element.text.strip() if element.text else ""
-                            button_aria = element.get_attribute("aria-label") or ""
-                            button_class = element.get_attribute("class") or ""
-
-                            # Skip buttons that are clearly not sort buttons
-                            negative_keywords = ["back", "next", "previous", "close", "cancel", "חזרה", "סגור", "ปิด"]
-                            if any(keyword in button_text.lower() or keyword in button_aria.lower()
-                                   for keyword in negative_keywords):
-                                continue
-
-                            # Positive detection for sort buttons
-                            sort_keywords = ["sort", "Sort", "SORT", "Ordina", "סידור", "เรียง", "排序", "trier", "ordenar", "sortieren"]
-                            has_sort_keyword = any(keyword in button_text or keyword in button_aria 
-                                                 for keyword in sort_keywords)
-                            
-                            # Check for common sort button classes
-                            has_sort_class = "HQzyZ" in button_class or "sort" in button_class.lower()
-                            
-                            # Check for aria attributes that indicate a dropdown
-                            has_dropdown_attrs = (element.get_attribute("aria-haspopup") == "true" or
-                                                element.get_attribute("aria-expanded") is not None)
-
-                            if has_sort_keyword or has_sort_class or has_dropdown_attrs:
-                                # Found a potential sort button
+                            if self._is_sort_button(element):
                                 sort_button = element
                                 log.info(f"Found sort button with selector: {selector}")
-                                log.info(f"Button text: '{button_text}', aria-label: '{button_aria}'")
                                 break
                         except Exception as e:
                             log.debug(f"Error checking element: {e}")
-                            continue
-
                     if sort_button:
                         break
                 except Exception as e:
                     log.debug(f"Error with selector '{selector}': {e}")
-                    continue
 
-            # If no button found with CSS selectors, try finding it from its container
+            # Fallback: any button in the place panel whose label names sorting.
             if not sort_button:
                 try:
-                    # Look for the sort container by its distinctive classes
-                    containers = driver.find_elements(By.CSS_SELECTOR, 'div.m6QErb.Hk4XGb, div.XiKgde.tLjsW')
-                    for container in containers:
+                    for button in driver.find_elements(By.CSS_SELECTOR, 'div[role="main"] button'):
                         try:
-                            # Find buttons within this container
-                            buttons = container.find_elements(By.TAG_NAME, 'button')
-                            for button in buttons:
-                                if button.is_displayed() and button.is_enabled():
-                                    sort_button = button
-                                    log.info("Found sort button through container element")
-                                    break
-                        except Exception:
-                            continue
-                        if sort_button:
-                            break
-                except Exception as e:
-                    log.debug(f"Error finding button via container: {e}")
-
-            # If still no button found, try XPath approach with keywords
-            if not sort_button:
-                xpath_terms = ["sort", "Sort", "Ordina", "סדר", "סידור", "เรียง", "排序", "Trier", "Ordenar", "Sortieren"]
-                for term in xpath_terms:
-                    try:
-                        xpath = f"//*[contains(text(), '{term}') or contains(@aria-label, '{term}')]"
-                        elements = driver.find_elements(By.XPATH, xpath)
-                        for element in elements:
-                            try:
-                                if element.is_displayed() and element.is_enabled():
-                                    sort_button = element
-                                    log.info(f"Found sort button with XPath term: '{term}'")
-                                    break
-                            except Exception:
-                                continue
-                        if sort_button:
-                            break
-                    except Exception:
-                        continue
-            
-            # Final fallback: look for any button in the reviews area that might open a dropdown
-            if not sort_button:
-                try:
-                    # Look specifically in the reviews container area
-                    reviews_container = driver.find_elements(By.CSS_SELECTOR, 'div.m6QErb, div.DxyBCb')
-                    for container in reviews_container:
-                        try:
-                            # Find all buttons in this container
-                            buttons = container.find_elements(By.TAG_NAME, 'button')
-                            for button in buttons:
-                                try:
-                                    if (button.is_displayed() and button.is_enabled() and
-                                        (button.get_attribute("aria-haspopup") == "true" or
-                                         "dropdown" in (button.get_attribute("class") or "").lower())):
-                                        sort_button = button
-                                        log.info("Found potential sort button via fallback dropdown detection")
-                                        break
-                                except Exception:
-                                    continue
-                            if sort_button:
+                            if self._is_sort_button(button):
+                                sort_button = button
+                                log.info("Found sort button by its label")
                                 break
                         except Exception:
                             continue
                 except Exception as e:
-                    log.debug(f"Error in fallback sort button detection: {e}")
+                    log.debug(f"Error in sort button label scan: {e}")
 
             # Final check - do we have a sort button?
             if not sort_button:
@@ -1083,9 +1010,11 @@ class GoogleReviewsScraper:
             # If menu not opened, abort
             if not menu_opened:
                 log.warning("Failed to open sort menu - keeping default sort order")
-                # Try to reset state by clicking elsewhere
+                # Close whatever the clicks opened (menu or sign-in dialog).
+                # Never click at an arbitrary position: that can land on a
+                # review or tab and change the list being scraped.
                 try:
-                    ActionChains(driver).move_by_offset(50, 50).click().perform()
+                    ActionChains(driver).send_keys(Keys.ESCAPE).perform()
                 except Exception:
                     pass
                 return False
@@ -1265,9 +1194,9 @@ class GoogleReviewsScraper:
                 else:
                     log.warning(f"No matching menu item found for '{method}'")
 
-                # If we get here, we failed - try to close the menu by clicking elsewhere
+                # If we get here, we failed - close the menu without clicking
                 try:
-                    ActionChains(driver).move_by_offset(50, 50).click().perform()
+                    ActionChains(driver).send_keys(Keys.ESCAPE).perform()
                 except Exception:
                     pass
 
@@ -1527,9 +1456,10 @@ class GoogleReviewsScraper:
             except Exception:
                 log.debug("Could not verify page ready state")
 
-            # Verify we're on a reviews page before proceeding
-            if "review" not in driver.current_url.lower():
-                log.warning("URL doesn't contain 'review' - might not be on reviews page")
+            # Never scrape another tab's review snippets as if they were the
+            # review list (issue #25): stop if Reviews is not the open tab.
+            if not self.verify_reviews_tab_clicked(driver):
+                raise RuntimeError("Reviews tab is not open after clicking it - stopping")
 
             # Try to set sort - but don't fail if it doesn't work
             sort_ok = False
