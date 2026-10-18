@@ -30,6 +30,10 @@ _ALLOWED_IMAGE_HOSTS = (
 # Characters considered safe in filenames after normalization.
 _SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]")
 
+# Characters Windows rejects in a directory name. Every place id format
+# contains ':' (0x..:0x.., cid:, short:, hash:).
+_UNSAFE_DIR_CHARS = re.compile(r'[:*?"<>|/\\]')
+
 
 def _is_allowed_image_host(url: str) -> bool:
     try:
@@ -60,6 +64,25 @@ def _sanitize_filename(name: str) -> str:
     if not name:
         name = "image"
     return name[:200]
+
+
+def place_image_dir(image_dir: Path, place_id: str) -> Path:
+    """
+    Per-place image folder with a name that is valid on every OS.
+
+    Older versions named the folder after the raw place id, which only works
+    on macOS/Linux. Such a folder is renamed once so existing images are kept.
+    """
+    base = image_dir / _UNSAFE_DIR_CHARS.sub("_", place_id)
+    legacy = image_dir / place_id
+    if legacy != base and legacy.is_dir() and not base.exists():
+        try:
+            legacy.rename(base)
+            log.info("Renamed image folder %s -> %s", legacy, base)
+        except OSError as e:
+            log.warning("Could not rename image folder %s: %s", legacy, e)
+            return legacy
+    return base
 
 
 class ImageHandler:
@@ -147,32 +170,10 @@ class ImageHandler:
         self._has_session_cookies = True
         log.debug("ImageHandler: loaded %d browser cookies", len(cookies))
 
-    @staticmethod
-    def _fs_safe(place_id: str) -> str:
-        r"""Make a place id safe to use as a directory name.
-
-        A Google Maps feature id looks like `0x89accda1eff33585:0x8347540c3719d897`. Used as a
-        path component on Windows, the `x:` is read as a DRIVE specifier, so the path truncates
-        and `mkdir` fails with
-        `OSError: [WinError 123] The filename, directory name, or volume label syntax is
-        incorrect: 'review_images\0x89accda1eff33585:0\profiles'`.
-
-        The failure is quiet in the worst way: the scrape itself succeeds and every review is
-        stored, while the whole images task fails and zero files are written. On a run of 103
-        reviews nothing in the console indicated a problem.
-
-        Replaces every character Windows forbids in a path component. The mapping is
-        deterministic, so a directory created on one OS is found again on another.
-        """
-        safe = place_id
-        for ch in ':*?"<>|/\\':
-            safe = safe.replace(ch, "_")
-        return safe.strip(". ") or "unknown_place"
-
     def set_place_id(self, place_id: str):
         """Set place ID to organize images into per-business subdirectories."""
         self._place_id = place_id
-        base = self.image_dir / self._fs_safe(place_id)
+        base = place_image_dir(self.image_dir, place_id)
         self.profile_dir = base / "profiles"
         self.review_dir = base / "reviews"
 

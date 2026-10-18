@@ -151,7 +151,7 @@ See `config.sample.yaml` for all available settings and `config.businesses.sampl
 | **Database** | `db_path` | `"reviews.db"` | SQLite database path (auto-created) |
 | **Processing** | `convert_dates` | `true` | Convert relative dates to ISO format |
 | **Images** | `download_images` | `true` | Download review/profile images |
-| | `image_dir` | `"review_images"` | Base directory (stored as `{image_dir}/{place_id}/`) |
+| | `image_dir` | `"review_images"` | Base directory (stored as `{image_dir}/{place_id}/`, with `:` in the ID replaced by `_` so it works on Windows) |
 | | `download_threads` | `4` | Parallel download threads |
 | | `max_width` | `1200` | Max image width |
 | | `max_height` | `1200` | Max image height |
@@ -478,12 +478,12 @@ reviews.db
 
 ```
 review_images/
-├── 0x305037cbd917b293:0/     # Place ID for Business A
+├── 0x305037cbd917b293_0/     # Place ID for Business A (`:` becomes `_`)
 │   ├── profiles/
 │   │   └── user123.jpg
 │   └── reviews/
 │       └── review789.jpg
-├── 0x30e29edb0244829f:0/     # Place ID for Business B
+├── 0x30e29edb0244829f_0/     # Place ID for Business B
 │   ├── profiles/
 │   └── reviews/
 ```

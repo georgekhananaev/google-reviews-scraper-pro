@@ -16,7 +16,7 @@ from typing import Dict, Any, Set
 
 from modules.date_converter import DateConverter
 from modules.date_filter import DateFilter
-from modules.image_handler import ImageHandler
+from modules.image_handler import ImageHandler, place_image_dir
 from modules.s3_handler import S3Handler
 
 log = logging.getLogger("scraper")
@@ -103,11 +103,11 @@ class S3Task(SyncTask):
 
         # Collect local files from reviews
         files_to_upload: Dict[str, tuple] = {}
+        base = place_image_dir(self._image_dir, place_id) if place_id else self._image_dir
         for review in reviews.values():
             # Review images
             for filename in review.get("local_images", []):
                 if filename and filename not in files_to_upload:
-                    base = self._image_dir / ImageHandler._fs_safe(place_id) if place_id else self._image_dir
                     local_path = base / "reviews" / filename
                     if local_path.exists():
                         files_to_upload[filename] = (local_path, False)
@@ -115,7 +115,6 @@ class S3Task(SyncTask):
             # Profile picture
             pp = review.get("local_profile_picture")
             if pp and pp not in files_to_upload:
-                base = self._image_dir / ImageHandler._fs_safe(place_id) if place_id else self._image_dir
                 local_path = base / "profiles" / pp
                 if local_path.exists():
                     files_to_upload[pp] = (local_path, True)
