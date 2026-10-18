@@ -272,6 +272,9 @@ class JobResponse(BaseModel):
     images_count: Optional[int] = None
     progress: Optional[Dict[str, Any]] = None
     place_id: Optional[str] = None
+    warning: Optional[str] = Field(
+        None, description="Set when Google showed only part of the review list (limited view)"
+    )
 
 
 class JobStatsResponse(BaseModel):
@@ -426,6 +429,7 @@ async def scrape_health(review_db=Depends(get_review_db)):
         last_session_status: most recent completed session's status
         empty_sessions_24h: number of sessions ending with zero reviews
         degraded_sessions_24h: sessions >30% parse errors
+        limited_sessions_24h: sessions where Google capped the review list
         last_synthetic_success: ISO ts of most recent non-empty completed session
     """
     try:
@@ -444,6 +448,7 @@ async def scrape_health(review_db=Depends(get_review_db)):
     last_success = None
     empty = 0
     degraded = 0
+    limited = 0
     for row in recent:
         completed_at = row.get("completed_at") or ""
         try:
@@ -456,10 +461,12 @@ async def scrape_health(review_db=Depends(get_review_db)):
             empty += 1
         if row["status"] == "degraded":
             degraded += 1
+        if row["status"] == "limited":
+            limited += 1
         if last_success is None and row["status"] == "completed" and (row.get("reviews_found") or 0) > 0:
             last_success = completed_at
 
-    total = empty + degraded
+    total = empty + degraded + limited
     if total == 0:
         status = "healthy"
     elif total < 3:
@@ -472,6 +479,7 @@ async def scrape_health(review_db=Depends(get_review_db)):
         "last_session_status": last_status,
         "empty_sessions_24h": empty,
         "degraded_sessions_24h": degraded,
+        "limited_sessions_24h": limited,
         "last_synthetic_success": last_success,
     }
 

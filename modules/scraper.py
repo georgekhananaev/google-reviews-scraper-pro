@@ -43,6 +43,22 @@ log = logging.getLogger("scraper")
 PANE_SEL = 'div[role="main"] div.m6QErb.DxyBCb.kA9KIf.dS8AEf'
 # URL fragment Google adds while the Reviews pane is open.
 REVIEWS_URL_MARKER = "!9m1!1b1"
+
+# Finds the "See more reviews (741)" button Google puts after the last card
+# when it caps the list for signed-out browsers. Returns [button, count text].
+_CAPPED_LIST_JS = """
+const pane = arguments[0];
+const cards = pane.querySelectorAll('[data-review-id]');
+const last = cards[cards.length - 1];
+const re = /\\((\\d[\\d.,\\s\\u00a0\\u202f]*)\\)/;
+for (const b of pane.querySelectorAll('button')) {
+  if (b.closest('[data-review-id]')) continue;
+  if (last && !(last.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+  const m = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).match(re);
+  if (m) return [b, m[1]];
+}
+return null;
+"""
 CARD_SEL = "div[data-review-id]"
 COOKIE_BTN = ('button[aria-label*="Accept" i],'
               'button[jsname="hZCF7e"],'
@@ -259,6 +275,8 @@ class GoogleReviewsScraper:
         self._selector_health: SelectorHealth | None = None
         self.place_id: str | None = None
         self.total_reviews: int | None = None
+        # Set when Google showed only part of the review list (limited view).
+        self.warning: str | None = None
 
     def _record_selector(self, selector: str, outcome: str) -> None:
         """Telemetry helper — always safe to call."""
@@ -861,6 +879,17 @@ class GoogleReviewsScraper:
             log.debug(f"Error verifying reviews tab click: {e}")
             return False
 
+    def _capped_list(self, driver: Chrome, pane: WebElement):
+        """
+        Return (button, held_back) when Google shows a "See more reviews (N)"
+        button under the list instead of loading more, else None.
+        """
+        found = driver.execute_script(_CAPPED_LIST_JS, pane)
+        if not found:
+            return None
+        digits = re.sub(r"\D", "", found[1])
+        return (found[0], int(digits)) if digits else None
+
     def _is_sort_button(self, element: WebElement) -> bool:
         """
         Accept only a visible control in the place panel that carries the sort
@@ -1404,6 +1433,8 @@ class GoogleReviewsScraper:
 
         place_id = None
         session_id = None
+        self.warning = None
+        limited = False
         batch_stats = {"new": 0, "updated": 0, "restored": 0, "unchanged": 0}
         changed_ids = set()  # Track IDs that actually changed for efficient sync
 
@@ -1534,6 +1565,7 @@ class GoogleReviewsScraper:
             consecutive_no_cards = 0  # Track how many times we find zero cards
             last_scroll_position = 0
             scroll_stuck_count = 0
+            more_clicked = False  # clicked "See more reviews" since the last new card
 
             while attempts < max_attempts:
                 if self.cancel_event.is_set():
@@ -1706,6 +1738,32 @@ class GoogleReviewsScraper:
                         attempts += 1
                         log.info(f"No new reviews in this iteration (idle: {idle}/{max_idle}, attempts: {attempts}/{max_attempts}, total seen: {len(seen)})")
 
+                        # Capped list: Google stops loading and shows a
+                        # "See more reviews (N)" button. Click it once; a
+                        # sign-in dialog, or still nothing new, means the
+                        # list is capped and scrolling cannot get more.
+                        capped = self._capped_list(driver, pane)
+                        if capped:
+                            more_button, held_back = capped
+                            if not more_clicked:
+                                more_clicked = True
+                                driver.execute_script("arguments[0].click();", more_button)
+                                time.sleep(3)
+                                dialogs = driver.find_elements(By.CSS_SELECTOR, '[role="dialog"]')
+                                if not any(d.is_displayed() for d in dialogs):
+                                    continue  # the next iteration picks up what it loaded
+                                ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+                            loaded = len(pane.find_elements(By.CSS_SELECTOR, CARD_SEL))
+                            limited = True
+                            self.warning = (
+                                f"Google showed only {loaded} of about {loaded + held_back} "
+                                "reviews (limited view for signed-out browsers)"
+                            )
+                            log.warning("%s. Stopping. To get the full list, use a signed-in "
+                                        "browser profile (browser_profile_dir, see README).",
+                                        self.warning)
+                            break
+
                         # When no new reviews, scroll more aggressively
                         try:
                             # Try multiple scroll methods
@@ -1716,6 +1774,7 @@ class GoogleReviewsScraper:
                         except Exception as e:
                             log.warning(f"Error scrolling: {e}")
                     else:
+                        more_clicked = False
                         log.info(f"Found {len(fresh_cards)} new reviews in this iteration")
 
                     # Check if we're actually scrolling or stuck
@@ -1781,7 +1840,9 @@ class GoogleReviewsScraper:
             if session_id:
                 # Session status: "empty" if zero reviews extracted,
                 # "degraded" if >30% of cards failed parsing, else "completed".
-                if real_found == 0:
+                if limited:
+                    session_status = "limited"
+                elif real_found == 0:
                     session_status = "empty"
                 elif total_found and (parse_errors / total_found) > 0.30:
                     session_status = "degraded"
@@ -1795,6 +1856,7 @@ class GoogleReviewsScraper:
                         batch_stats.get("updated", 0)
                         + batch_stats.get("restored", 0)
                     ),
+                    error=self.warning,
                 )
 
             # Post-scrape pipeline: process once, write to all targets.
@@ -1839,6 +1901,8 @@ class GoogleReviewsScraper:
                     batch_stats["parse_errors"],
                 )
             log.info("Total unique reviews in DB: %d", len(reviews))
+            if self.warning:
+                log.warning("INCOMPLETE: %s", self.warning)
 
             end_time = time.time()
             elapsed_time = end_time - start_time

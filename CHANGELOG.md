@@ -5,6 +5,7 @@ All notable changes to Google Reviews Scraper Pro.
 ## [Unreleased]
 
 ### Added
+- **Limited-view detection** — Google currently shows signed-out browsers only the first 5 reviews of a place, followed by a "See more reviews (N)" button that opens a sign-in dialog. The scraper used to scroll 15 more times, store the 5 reviews and report a normal success. It now reads N from that button, clicks it once (if more reviews load, scraping continues), and otherwise stops right away. The session is stored with the new status `limited` and a message like "Google showed only 5 of about 746 reviews", the run ends with an `INCOMPLETE:` warning, API jobs get a new `warning` field (also used as the progress message), `/health/scrape` gains `limited_sessions_24h` and reports `degraded`, and `start.py health` prints `DEGRADED`. Exit codes and job status (`completed`) are unchanged.
 - **`place_id` in job responses** (PR #27 by @sajjad-git) — `GET /jobs/{job_id}` and `GET /jobs` now return the scraped place's `place_id`, so clients can go straight to `/reviews/{place_id}` and `/places/{place_id}` without matching URLs. Also set when the scrape fails after the place was registered. Noted in the README API section.
 
 ### Fixed

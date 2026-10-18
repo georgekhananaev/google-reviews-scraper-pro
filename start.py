@@ -510,7 +510,9 @@ def _run_health(config, args):
         print(f"Probe raised: {e}")
         sys.exit(1)
 
-    if ok:
+    if ok and scraper.warning:
+        print(f"DEGRADED — synthetic scrape of {synthetic_url} succeeded, but {scraper.warning}.")
+    elif ok:
         print(f"HEALTHY — synthetic scrape of {synthetic_url} succeeded.")
     else:
         print(f"UNHEALTHY — synthetic scrape of {synthetic_url} returned no reviews.")
