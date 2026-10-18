@@ -173,6 +173,7 @@ See `config.sample.yaml` for all available settings and `config.businesses.sampl
 | | `s3.path_style` | `false` | Path-style addressing (MinIO requires `true`) |
 | | `s3.acl` | `"public-read"` | ACL for uploads (empty string = skip ACL entirely) |
 | | `s3.delete_local_after_upload` | `false` | Remove local files after upload |
+| **Output** | `custom_params` | `{}` | Extra fields added to every review document, e.g. `{"company": "Acme"}` |
 | **URL Replacement** | `replace_urls` | `false` | Replace Google URLs with custom CDN URLs |
 | | `custom_url_base` | `""` | Base URL for replacements |
 | | `preserve_original_urls` | `true` | Keep originals in `original_*` fields |
@@ -597,7 +598,7 @@ Here's what you'll rip out of Google's clutches for each review (and yes, it's *
   "review_date": "2025-04-15T08:15:22+00:00",
   "created_date": "2025-04-22T14:30:45+00:00",
   "last_modified_date": "2025-04-22T14:30:45+00:00",
-  "company": "Your Business Name",
+  "company": "Your Business Name",  // from custom_params (none by default)
   "source": "Google Maps"
   // Add whatever other fields you want - this baby is extensible
 }

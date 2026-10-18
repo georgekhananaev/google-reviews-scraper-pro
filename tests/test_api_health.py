@@ -11,10 +11,7 @@ from modules.review_db import ReviewDB
 
 
 @pytest.fixture
-def scrape_health(tmp_path, monkeypatch):
-    # Importing api_server loads config.yaml from the working directory and
-    # writes a default one if missing, so import it from an empty temp dir.
-    monkeypatch.chdir(tmp_path)
+def scrape_health():
     from api_server import scrape_health as endpoint
     return endpoint
 

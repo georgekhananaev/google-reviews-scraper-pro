@@ -533,16 +533,18 @@ PermissionError: [Errno 13] Permission denied
 
 ### Issue: Config File Not Found
 
-**Error Message:**
+**Log Message:**
 ```
-FileNotFoundError: config.yaml not found
+Config file config.yaml not found, using defaults (copy config.sample.yaml to config.yaml to customize)
 ```
+
+The scraper runs with built-in defaults (no MongoDB, no S3, no extra fields) and does not create the file for you.
 
 **Solution:**
 
-1. **Create config.yaml** from example:
+1. **Create config.yaml** from the sample:
    ```bash
-   cp examples/config-example.txt config.yaml
+   cp config.sample.yaml config.yaml
    ```
 
 2. **Specify custom path:**

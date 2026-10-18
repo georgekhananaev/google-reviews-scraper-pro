@@ -110,8 +110,7 @@ class TestImageFolder:
         assert not (tmp_path / "0x30e29edb0244829f_0").exists()
 
 
-def test_api_reviews_by_old_id(db, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)  # importing api_server may write config.yaml
+def test_api_reviews_by_old_id(db):
     from api_server import list_reviews, get_review
 
     db.migrate_truncated_place_id(FULL, URL)

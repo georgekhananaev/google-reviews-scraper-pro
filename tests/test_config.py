@@ -123,6 +123,26 @@ class TestValidation:
         assert config["max_reviews"] == DEFAULT_CONFIG["max_reviews"]
 
 
+class TestMissingFileAndDefaults:
+    """A missing config.yaml means defaults; nothing is written to disk."""
+
+    def test_missing_file_is_not_created(self, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        load_config(config_path)
+        assert not config_path.exists()
+
+    def test_no_custom_params_by_default(self, tmp_path):
+        assert load_config(tmp_path / "config.yaml")["custom_params"] == {}
+
+    def test_mongodb_off_by_default(self, tmp_path):
+        assert load_config(tmp_path / "config.yaml")["use_mongodb"] is False
+
+    def test_user_custom_params_are_kept(self, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text('custom_params:\n  company: "Acme"\n', encoding="utf-8")
+        assert load_config(config_path)["custom_params"] == {"company": "Acme"}
+
+
 class TestEncoding:
     """config.yaml is UTF-8 on every OS (Windows defaults to cp1252/cp1254)."""
 
