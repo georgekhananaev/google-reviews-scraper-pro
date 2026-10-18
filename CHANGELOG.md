@@ -4,6 +4,9 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+### Fixed
+- **Reviews tab rejected when the place name contains a tab word** (issue #25, PR #26 by @sajjad-git) — Google puts the place name in every tab's aria-label, so "Reviews for Caledon Community Services" lost its match to the "services" penalty and the scraper fell back to clicking any element with a review word. The penalty is now skipped when the same field already has a review keyword, and the place name (from the page title) is removed from the aria-label before scoring, so names like "Davis Diner" (contains "avis") can't make a hidden Menu or Overview tab look like Reviews either. Six regression tests added.
+
 ## [1.2.3] - 2026-04-23
 
 ### Fixed

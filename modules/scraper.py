@@ -574,6 +574,12 @@ class GoogleReviewsScraper:
     # does not. Configurable via config.yaml adaptive.tab_detection_threshold.
     TAB_DETECTION_THRESHOLD = 1.5
 
+    # Place name from the page title, set once the place page has loaded.
+    # Google embeds it in every tab's aria-label ("Reviews for <name>"), so it
+    # is removed before scoring: names like "Davis Diner" (contains "avis") or
+    # "Community Services" must not add or cancel keyword matches.
+    _place_name = ""
+
     def is_reviews_tab(self, tab: WebElement) -> bool:
         """
         Score `tab` against multiple signals and accept only if the total
@@ -598,6 +604,8 @@ class GoogleReviewsScraper:
     def _score_reviews_tab(self, tab: WebElement) -> float:
         """Weighted scoring for tab-is-reviews detection."""
         aria_label = (tab.get_attribute("aria-label") or "").lower()
+        if self._place_name:
+            aria_label = aria_label.replace(self._place_name.lower(), " ")
         tab_text = (tab.text or "").lower()
         tab_index = tab.get_attribute("data-tab-index") or ""
 
@@ -618,7 +626,8 @@ class GoogleReviewsScraper:
         # IMPORTANT: only penalize when no review keyword matched. Aria-labels
         # embed the place name ("Reviews for Caledon Community Services"), and
         # place names can contain penalty words like "services" or "menu",
-        # which would wrongly cancel out a genuine match.
+        # which would wrongly cancel out a genuine match. The name is stripped
+        # above when known; this guard covers labels where it could not be.
         if not aria_has_review and _text_contains_any(aria_label, NON_REVIEW_TAB_WORDS):
             score -= 1.5
         if not text_has_review and _text_contains_any(tab_text, NON_REVIEW_TAB_WORDS):
@@ -1482,6 +1491,7 @@ class GoogleReviewsScraper:
                 place_name = title.replace(" - Google Maps", "").strip()
             except Exception:
                 pass
+            self._place_name = place_name
             place_id = extract_place_id(url, resolved_url)
             lat, lng = self._extract_place_coords(resolved_url)
             lat_f = float(lat) if lat else None
