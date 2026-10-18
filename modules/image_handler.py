@@ -72,10 +72,13 @@ def place_image_dir(image_dir: Path, place_id: str) -> Path:
 
     Older versions named the folder after the raw place id, which only works
     on macOS/Linux. Such a folder is renamed once so existing images are kept.
+    Only a direct child of `image_dir` is touched: cid/short ids come from the
+    URL and may contain "../".
     """
-    base = image_dir / _UNSAFE_DIR_CHARS.sub("_", place_id)
+    base = image_dir / (_UNSAFE_DIR_CHARS.sub("_", place_id).strip(". ") or "unknown_place")
     legacy = image_dir / place_id
-    if legacy != base and legacy.is_dir() and not base.exists():
+    if (legacy != base and legacy.is_dir() and not base.exists()
+            and legacy.resolve().parent == image_dir.resolve()):
         try:
             legacy.rename(base)
             log.info("Renamed image folder %s -> %s", legacy, base)

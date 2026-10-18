@@ -52,3 +52,15 @@ def test_set_place_id_uses_safe_folder(tmp_path):
     assert handler.profile_dir == tmp_path / "0x882b21e060e098b7_0" / "profiles"
     assert handler.review_dir == tmp_path / "0x882b21e060e098b7_0" / "reviews"
     assert handler.review_dir.is_dir()
+
+
+def test_traversal_in_place_id_stays_inside_image_dir(tmp_path):
+    image_dir = tmp_path / "images"
+    (image_dir / "cid:..").mkdir(parents=True)  # left behind by an older version
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    base = place_image_dir(image_dir, "cid:../../../outside")
+
+    assert base.parent == image_dir
+    assert outside.is_dir()  # not moved into the image folder
