@@ -4,6 +4,8 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-19
+
 ### Added
 - **Sign-in expiry shows up in health checks** — `/health/scrape` gains `browser_profile` (`signed_in`, `signed_out`, `unknown` while Chrome holds the profile, or `not_configured`) and reports at least `degraded` when the profile is signed out, since every scrape then gets the capped list. `python start.py health` prints the profile state and says `DEGRADED` when it's signed out. `browser-login --check` says when the profile can't be read because Chrome is using it, instead of reporting it as signed out.
 
