@@ -17,6 +17,10 @@ _TRACKING_PARAMS = frozenset({
     "igshid", "mc_cid", "mc_eid", "ref", "source",
 })
 
+# Full hex feature id: "0x<cell>:0x<cid>". Older versions cut it after the
+# colon and stored "0x<cell>:0".
+_FULL_HEX_ID = re.compile(r"(0x[0-9a-fA-F]+):0x[0-9a-fA-F]+")
+
 
 def extract_place_id(original_url: str, resolved_url: str) -> str:
     """
@@ -66,8 +70,8 @@ def _extract_cid(url: str) -> str:
 
 
 def _extract_hex_id(url: str) -> str:
-    """Extract hex place ID from /data= param in URL (e.g., !1s0x80dc...)."""
-    match = re.search(r"!1s(0x[0-9a-fA-F]+:[0-9a-fA-F]+)", url)
+    """Extract hex place ID from /data= param in URL (e.g., !1s0x80dc...:0x9a2b...)."""
+    match = re.search(r"!1s(0x[0-9a-fA-F]+:(?:0x)?[0-9a-fA-F]+)", url)
     if match:
         return match.group(1)
     # Also try the shorter form without colon
@@ -75,6 +79,15 @@ def _extract_hex_id(url: str) -> str:
     if match:
         return match.group(1)
     return ""
+
+
+def truncated_hex_id(place_id: str) -> str:
+    """
+    The id older versions stored for a full hex id ("0x…:0x…" -> "0x…:0").
+    Empty string for any other id format.
+    """
+    match = _FULL_HEX_ID.fullmatch(place_id)
+    return f"{match.group(1)}:0" if match else ""
 
 
 def _extract_short_link_id(url: str) -> str:

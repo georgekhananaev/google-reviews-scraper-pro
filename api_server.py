@@ -675,6 +675,12 @@ async def get_place(place_id: str, review_db=Depends(get_review_db)):
     return PlaceResponse(**place)
 
 
+def _current_place_id(review_db, place_id: str) -> str:
+    """Map an old place id (stored as an alias) to the current one."""
+    place = review_db.get_place(place_id)
+    return place["place_id"] if place else place_id
+
+
 # --- Reviews Router ---
 reviews_router = APIRouter(tags=["Reviews"], dependencies=[Depends(require_api_key)])
 
@@ -692,6 +698,7 @@ async def list_reviews(
     place = review_db.get_place(place_id)
     if not place:
         raise HTTPException(status_code=404, detail="Place not found")
+    place_id = place["place_id"]  # an old id (alias) maps to the current one
 
     total = review_db.count_reviews(place_id, include_deleted=include_deleted)
     rows = review_db.get_reviews(place_id, limit=limit, offset=offset,
@@ -706,7 +713,7 @@ async def list_reviews(
                      summary="Get Single Review")
 async def get_review(place_id: str, review_id: str, review_db=Depends(get_review_db)):
     """Get a single review by ID."""
-    row = review_db.get_review(review_id, place_id)
+    row = review_db.get_review(review_id, _current_place_id(review_db, place_id))
     if not row:
         raise HTTPException(status_code=404, detail="Review not found")
     return ReviewResponse(**_clean_review(row))
@@ -718,6 +725,7 @@ async def get_review(place_id: str, review_id: str, review_db=Depends(get_review
 async def get_review_history(place_id: str, review_id: str,
                               review_db=Depends(get_review_db)):
     """Get the full change history for a specific review."""
+    place_id = _current_place_id(review_db, place_id)
     row = review_db.get_review(review_id, place_id)
     if not row:
         raise HTTPException(status_code=404, detail="Review not found")

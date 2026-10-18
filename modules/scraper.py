@@ -10,6 +10,7 @@ import re
 import threading
 import time
 import traceback
+from pathlib import Path
 from typing import Dict, Any, List
 
 from seleniumbase import Driver
@@ -30,6 +31,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
 
 from modules.date_filter import DateFilter, EARLY_STOP_CONSECUTIVE
+from modules.image_handler import place_image_dir
 from modules.models import RawReview
 from modules.pipeline import PostScrapeRunner
 from modules.review_db import ReviewDB
@@ -1432,6 +1434,7 @@ class GoogleReviewsScraper:
         log.info(f"URL: {url}")
 
         place_id = None
+        legacy_id = ""
         session_id = None
         self.warning = None
         limited = False
@@ -1456,6 +1459,13 @@ class GoogleReviewsScraper:
                 pass
             self._place_name = place_name
             place_id = extract_place_id(url, resolved_url)
+            # Places stored by older versions under a truncated hex id move
+            # to the full id (DB rows + image folder) on their next scrape.
+            legacy_id = self.review_db.migrate_truncated_place_id(place_id, url)
+            if legacy_id:
+                log.info("Moved place %s to its full id %s", legacy_id, place_id)
+                place_image_dir(Path(self.config.get("image_dir", "review_images")),
+                                place_id, previous_ids=(legacy_id,))
             lat, lng = self._extract_place_coords(resolved_url)
             lat_f = float(lat) if lat else None
             lng_f = float(lng) if lng else None
@@ -1881,7 +1891,9 @@ class GoogleReviewsScraper:
                 # changed this session — avoids repeatedly re-downloading
                 # images and re-syncing identical documents. Unchanged
                 # reviews already have their images + Mongo docs in place.
-                runner.set_changed_ids(changed_ids)
+                # After a place-id move, resync every review so MongoDB
+                # documents and S3 keys pick up the new id.
+                runner.set_changed_ids(None if legacy_id else changed_ids)
                 try:
                     runner.run(legacy_docs, place_id, seen=seen)
                 finally:

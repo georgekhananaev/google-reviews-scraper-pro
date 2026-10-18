@@ -66,25 +66,34 @@ def _sanitize_filename(name: str) -> str:
     return name[:200]
 
 
-def place_image_dir(image_dir: Path, place_id: str) -> Path:
+def _dir_name(place_id: str) -> str:
+    return _UNSAFE_DIR_CHARS.sub("_", place_id).strip(". ") or "unknown_place"
+
+
+def place_image_dir(image_dir: Path, place_id: str, previous_ids: Tuple[str, ...] = ()) -> Path:
     """
     Per-place image folder with a name that is valid on every OS.
 
     Older versions named the folder after the raw place id, which only works
-    on macOS/Linux. Such a folder is renamed once so existing images are kept.
-    Only a direct child of `image_dir` is touched: cid/short ids come from the
-    URL and may contain "../".
+    on macOS/Linux, and stored hex ids cut short ("0x…:0"). A folder under any
+    of those names (pass the old id in `previous_ids`) is renamed once so
+    existing images are kept. Only direct children of `image_dir` are
+    touched: cid/short ids come from the URL and may contain "../".
     """
-    base = image_dir / (_UNSAFE_DIR_CHARS.sub("_", place_id).strip(". ") or "unknown_place")
-    legacy = image_dir / place_id
-    if (legacy != base and legacy.is_dir() and not base.exists()
-            and legacy.resolve().parent == image_dir.resolve()):
-        try:
-            legacy.rename(base)
-            log.info("Renamed image folder %s -> %s", legacy, base)
-        except OSError as e:
-            log.warning("Could not rename image folder %s: %s", legacy, e)
-            return legacy
+    base = image_dir / _dir_name(place_id)
+    if base.exists():
+        return base
+    for old_id in (place_id, *previous_ids):
+        for legacy in (image_dir / old_id, image_dir / _dir_name(old_id)):
+            if (legacy != base and legacy.is_dir()
+                    and legacy.resolve().parent == image_dir.resolve()):
+                try:
+                    legacy.rename(base)
+                    log.info("Renamed image folder %s -> %s", legacy, base)
+                except OSError as e:
+                    log.warning("Could not rename image folder %s: %s", legacy, e)
+                    return legacy
+                return base
     return base
 
 

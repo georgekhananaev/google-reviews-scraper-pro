@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Set, List
 
 from modules.database_backend import SQLiteBackend
-from modules.place_id import canonicalize_url
+from modules.place_id import canonicalize_url, truncated_hex_id
 
 log = logging.getLogger("scraper")
 
@@ -229,6 +229,44 @@ class ReviewDB:
             )
         self.backend.commit()
         return place_id
+
+    def migrate_truncated_place_id(self, place_id: str, original_url: str) -> str:
+        """
+        Move a place stored under the truncated id older versions produced
+        ("0x…:0") to its full id, and keep the old id as an alias.
+
+        Only done when the old row was scraped from the same URL: places that
+        share the first half of the id (same location) are never merged.
+        Returns the old id if the place was moved, else "".
+        """
+        legacy = truncated_hex_id(place_id)
+        if not legacy:
+            return ""
+        old = self.backend.fetchone(
+            "SELECT original_url FROM places WHERE place_id = ?", (legacy,)
+        )
+        if not old or old["original_url"] != original_url:
+            return ""
+        if self.backend.fetchone("SELECT place_id FROM places WHERE place_id = ?", (place_id,)):
+            log.warning("Place %s exists under both %s and its full id; leaving both as they are",
+                        original_url, legacy)
+            return ""
+
+        with self.backend.transaction() as tx:
+            # Children first, parent last; foreign keys are checked at commit.
+            tx.execute("PRAGMA defer_foreign_keys = ON")
+            for table in ("reviews", "review_history", "scrape_sessions", "sync_checkpoints"):
+                tx.execute(f"UPDATE {table} SET place_id = ? WHERE place_id = ?",
+                           (place_id, legacy))
+            tx.execute("UPDATE place_aliases SET canonical_id = ? WHERE canonical_id = ?",
+                       (place_id, legacy))
+            tx.execute("UPDATE places SET place_id = ? WHERE place_id = ?", (place_id, legacy))
+            tx.execute(
+                "INSERT OR IGNORE INTO place_aliases "
+                "(alias_id, canonical_id, original_url, created_at) VALUES (?, ?, ?, ?)",
+                (legacy, place_id, original_url, _now_utc()),
+            )
+        return legacy
 
     def resolve_alias(self, place_id: str, resolved_url: str) -> str:
         """
