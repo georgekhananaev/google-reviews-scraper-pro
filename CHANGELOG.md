@@ -4,6 +4,8 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-19
+
 ### Added
 - **CI** — GitHub Actions runs the test suite on every push and pull request: Ubuntu with Python 3.10 and 3.14, Windows with Python 3.13. The MongoDB/S3 connection tests now skip when the gitignored `config.yaml` is missing (they errored in every fresh clone), and tests that need `:` in folder names skip on Windows.
 - **Limited-view detection** — Google currently shows signed-out browsers only the first 5 reviews of a place, followed by a "See more reviews (N)" button that opens a sign-in dialog. The scraper used to scroll 15 more times, store the 5 reviews and report a normal success. It now reads N from that button, clicks it once (if more reviews load, scraping continues), and otherwise stops right away. The session is stored with the new status `limited` and a message like "Google showed only 5 of about 746 reviews", the run ends with an `INCOMPLETE:` warning, API jobs get a new `warning` field (also used as the progress message), `/health/scrape` gains `limited_sessions_24h` and reports `degraded`, and `start.py health` prints `DEGRADED`. Exit codes and job status (`completed`) are unchanged.
