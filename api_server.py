@@ -271,6 +271,7 @@ class JobResponse(BaseModel):
     reviews_count: Optional[int] = None
     images_count: Optional[int] = None
     progress: Optional[Dict[str, Any]] = None
+    place_id: Optional[str] = None
 
 
 class JobStatsResponse(BaseModel):
