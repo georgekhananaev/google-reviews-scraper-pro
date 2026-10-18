@@ -28,6 +28,7 @@ class Card:
 
 
 collect = GoogleReviewsScraper._collect_fresh_cards
+status = GoogleReviewsScraper._session_status
 
 
 class TestMaxReviews:
@@ -60,6 +61,22 @@ class TestMaxReviews:
         fresh, already = collect(cards, processed, set(), max_reviews=0)
         assert [c.review_id for c in fresh] == ["a", "c"]
         assert already == 0
+
+
+class TestSessionStatus:
+
+    def test_nothing_new_is_completed_not_empty(self):
+        """Checked the newest 3, all already stored: a normal run, not an empty one."""
+        assert status(limited=False, looked_at=3, total_found=0, parse_errors=0) == "completed"
+
+    def test_no_reviews_seen_is_empty(self):
+        assert status(limited=False, looked_at=0, total_found=0, parse_errors=0) == "empty"
+
+    def test_limited_wins(self):
+        assert status(limited=True, looked_at=5, total_found=5, parse_errors=0) == "limited"
+
+    def test_many_parse_errors_is_degraded(self):
+        assert status(limited=False, looked_at=10, total_found=10, parse_errors=4) == "degraded"
 
 
 def review(i):

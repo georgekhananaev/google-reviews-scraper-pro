@@ -896,6 +896,23 @@ class GoogleReviewsScraper:
             return False
 
     @staticmethod
+    def _session_status(limited: bool, looked_at: int, total_found: int,
+                        parse_errors: int) -> str:
+        """
+        "limited" when Google capped the list, "empty" when no review was seen
+        at all, "degraded" when >30% of parsed cards failed, else "completed".
+        Reviews skipped because they are already stored count as seen, so a
+        re-scrape that finds nothing new is "completed", not "empty".
+        """
+        if limited:
+            return "limited"
+        if looked_at == 0:
+            return "empty"
+        if total_found and parse_errors / total_found > 0.30:
+            return "degraded"
+        return "completed"
+
+    @staticmethod
     def _collect_fresh_cards(cards: List[WebElement], processed_ids: set, seen: set,
                              max_reviews: int) -> tuple:
         """
@@ -1916,16 +1933,9 @@ class GoogleReviewsScraper:
             real_found = total_found - parse_errors
             self.total_reviews = real_found
             if session_id:
-                # Session status: "empty" if zero reviews extracted,
-                # "degraded" if >30% of cards failed parsing, else "completed".
-                if limited:
-                    session_status = "limited"
-                elif real_found == 0:
-                    session_status = "empty"
-                elif total_found and (parse_errors / total_found) > 0.30:
-                    session_status = "degraded"
-                else:
-                    session_status = "completed"
+                session_status = self._session_status(
+                    limited, len(processed_ids), total_found, parse_errors
+                )
                 self.review_db.end_session(
                     session_id, session_status,
                     reviews_found=real_found,
