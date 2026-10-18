@@ -367,7 +367,7 @@ curl -X POST "http://localhost:8000/scrape" \
 # List all jobs (with optional status filter)
 curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs"
 
-# Check job status
+# Check job status (includes place_id and reviews_count once the scrape finishes)
 curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}"
 
 # Start a pending job manually

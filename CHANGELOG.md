@@ -5,7 +5,7 @@ All notable changes to Google Reviews Scraper Pro.
 ## [Unreleased]
 
 ### Added
-- **`place_id` in job responses** (PR #27 by @sajjad-git) — `GET /jobs/{job_id}` and `GET /jobs` now return the scraped place's `place_id`, so clients can go straight to `/reviews/{place_id}` and `/places/{place_id}` without matching URLs. Also set when the scrape fails after the place was registered.
+- **`place_id` in job responses** (PR #27 by @sajjad-git) — `GET /jobs/{job_id}` and `GET /jobs` now return the scraped place's `place_id`, so clients can go straight to `/reviews/{place_id}` and `/places/{place_id}` without matching URLs. Also set when the scrape fails after the place was registered. Noted in the README API section.
 
 ### Fixed
 - **`reviews_count` in job responses was always null** (PR #27 by @sajjad-git) — the job manager read `scraper.total_reviews`, which nothing ever set. It now holds the number of reviews processed in the run (new + updated + restored + unchanged, parse errors excluded). Tests added in `tests/test_job_manager.py`.
