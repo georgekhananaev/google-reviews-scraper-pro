@@ -72,6 +72,19 @@ class TestSignIn:
         write_cookie_store(tmp_path, ["SID"], relative="Default/Cookies")
         assert bp.profile_signed_in(tmp_path)
 
+    def test_unreadable_store_is_unknown(self, tmp_path):
+        store = tmp_path / "Default" / "Network" / "Cookies"
+        store.parent.mkdir(parents=True)
+        store.write_bytes(b"not a database")
+        assert bp.profile_signed_in(tmp_path) is None
+        assert bp.profile_state({"browser_profile_dir": str(tmp_path)}) == "unknown"
+
+    def test_profile_state(self, tmp_path):
+        assert bp.profile_state({}) == "not_configured"
+        assert bp.profile_state({"browser_profile_dir": str(tmp_path / "new")}) == "signed_out"
+        write_cookie_store(tmp_path / "p", ["SID"])
+        assert bp.profile_state({"browser_profile_dir": str(tmp_path / "p")}) == "signed_in"
+
     def test_closed_profile_signed_out(self, tmp_path):
         write_cookie_store(tmp_path, ["NID", "AEC"])
         assert not bp.profile_signed_in(tmp_path)
@@ -126,6 +139,15 @@ class TestBrowserLoginCommand:
         run({}, signs_in=False, check=True, profile_dir=str(tmp_path / "p"))
         assert "is signed in" in capsys.readouterr().out
 
+    def test_check_while_store_unreadable(self, run, tmp_path, capsys):
+        store = tmp_path / "p" / "Default" / "Network" / "Cookies"
+        store.parent.mkdir(parents=True)
+        store.write_bytes(b"locked by chrome")
+        with pytest.raises(SystemExit) as exit_info:
+            run({}, signs_in=False, check=True, profile_dir=str(tmp_path / "p"))
+        assert exit_info.value.code == 1
+        assert "Can't read the profile" in capsys.readouterr().out
+
     def test_missing_profile_folder_setting(self, run):
         with pytest.raises(SystemExit) as exit_info:
             run({})
@@ -172,3 +194,47 @@ def test_driver_opens_with_profile(tmp_path):
     finally:
         driver.quit()
     assert (profile / "Default").is_dir()
+
+
+class TestLimitedMessage:
+    """The INCOMPLETE warning names the likely fix for the setup."""
+
+    def scraper(self, config, signed_in=None):
+        s = GoogleReviewsScraper.__new__(GoogleReviewsScraper)
+        s.config = config
+        s.signed_in = signed_in
+        return s
+
+    def test_without_profile_points_to_setting(self):
+        message = self.scraper({})._limited_message(5, 741)
+        assert message.startswith("Google showed only 5 of about 746 reviews")
+        assert "set browser_profile_dir" in message
+
+    def test_signed_out_profile_points_to_login(self, tmp_path):
+        message = self.scraper({"browser_profile_dir": str(tmp_path)}, signed_in=False)._limited_message(5, 741)
+        assert "run: python start.py browser-login" in message
+
+    def test_signed_in_profile_says_so(self, tmp_path):
+        message = self.scraper({"browser_profile_dir": str(tmp_path)}, signed_in=True)._limited_message(5, 741)
+        assert message.endswith("even though the browser profile is signed in")
+
+
+def test_health_command_flags_signed_out_profile(tmp_path, monkeypatch, capsys):
+    import modules.scraper as scraper_module
+    from start import _run_health
+
+    class StubScraper:
+        warning = None
+
+        def __init__(self, config):
+            pass
+
+        def scrape(self):
+            return True
+
+    monkeypatch.setattr(scraper_module, "GoogleReviewsScraper", StubScraper)
+    _run_health({"browser_profile_dir": str(tmp_path / "p")},
+                SimpleNamespace(url="https://maps.app.goo.gl/x"))
+    out = capsys.readouterr().out
+    assert "NOT signed in" in out
+    assert out.strip().splitlines()[-1].startswith("DEGRADED")

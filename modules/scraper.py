@@ -282,6 +282,8 @@ class GoogleReviewsScraper:
         self.total_images: int | None = None
         # Set when Google showed only part of the review list (limited view).
         self.warning: str | None = None
+        # Google sign-in of browser_profile_dir in this run (None: no profile).
+        self.signed_in: bool | None = None
 
     def _record_selector(self, selector: str, outcome: str) -> None:
         """Telemetry helper — always safe to call."""
@@ -943,6 +945,16 @@ class GoogleReviewsScraper:
                 fresh.append(c)
         return fresh, already_stored
 
+    def _limited_message(self, loaded: int, held_back: int) -> str:
+        """Warning for a capped list, ending with the likely fix for this setup."""
+        message = (f"Google showed only {loaded} of about {loaded + held_back} "
+                   "reviews (limited view for signed-out browsers)")
+        if profile_dir(self.config) is None:
+            return message + "; set browser_profile_dir to scrape signed in (see README)"
+        if not self.signed_in:
+            return message + "; the browser profile is not signed in, run: python start.py browser-login"
+        return message + " even though the browser profile is signed in"
+
     def _capped_list(self, driver: Chrome, pane: WebElement):
         """
         Return (button, held_back) when Google shows a "See more reviews (N)"
@@ -1541,6 +1553,7 @@ class GoogleReviewsScraper:
                     signed_in = is_signed_in(driver.get_cookies())
                 except WebDriverException:
                     signed_in = False
+                self.signed_in = signed_in
                 if signed_in:
                     log.info("Browser profile is signed in to Google")
                 else:
@@ -1850,13 +1863,8 @@ class GoogleReviewsScraper:
                             # Unique reviews: CARD_SEL also matches nested elements.
                             loaded = len(processed_ids)
                             limited = True
-                            self.warning = (
-                                f"Google showed only {loaded} of about {loaded + held_back} "
-                                "reviews (limited view for signed-out browsers)"
-                            )
-                            log.warning("%s. Stopping. To get the full list, use a signed-in "
-                                        "browser profile (browser_profile_dir, see README).",
-                                        self.warning)
+                            self.warning = self._limited_message(loaded, held_back)
+                            log.warning("%s. Stopping.", self.warning)
                             break
 
                         # When no new reviews, scroll more aggressively

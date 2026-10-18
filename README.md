@@ -198,7 +198,8 @@ See `config.sample.yaml` for all available settings and `config.businesses.sampl
 Since autumn 2026 Google often shows signed-out browsers only the first 5 reviews of a place, followed by a "See more reviews (N)" button that just opens a sign-in dialog. No amount of scrolling gets past that. The scraper spots it, stops right away and tells you straight:
 
 ```
-WARNING  INCOMPLETE: Google showed only 5 of about 746 reviews (limited view for signed-out browsers)
+WARNING  INCOMPLETE: Google showed only 5 of about 746 reviews (limited view for signed-out browsers);
+         set browser_profile_dir to scrape signed in (see README)
 ```
 
 The session is stored as `limited`, API jobs carry a `warning`, and `/health/scrape` reports `degraded`. The way past the wall is to scrape signed in:
@@ -213,6 +214,10 @@ The session is stored as `limited`, API jobs carry a `warning`, and `/health/scr
    ```
    A normal Chrome window opens on Google's sign-in page. Sign in, then quit that Chrome completely (Cmd+Q on macOS). The command tells you whether the sign-in stuck.
 3. Scrape as usual. The log says `Browser profile is signed in to Google`, or warns you when the login has expired (run `browser-login` again). `python start.py browser-login --check` checks without opening Chrome.
+
+Sign-ins expire now and then, so let your monitoring catch it: `/health/scrape` reports `browser_profile` (`signed_in`, `signed_out`, `unknown` while Chrome holds the profile, or `not_configured`) and drops to `degraded` when it's `signed_out`; `python start.py health` prints the same and says `DEGRADED`. A capped run's `INCOMPLETE` warning also tells you whether the profile needs a fresh `browser-login`.
+
+**Keep runs modest.** A signed-in scrape reads as that account. `scrape_mode: "update"` with `stop_threshold: 3` only fetches new reviews and stops once it reaches stored ones; add `max_reviews` (e.g. `200`) as a per-run cap.
 
 **Keep your account safe:**
 
@@ -292,7 +297,8 @@ python start.py db-vacuum
 ### Health & Telemetry
 
 ```bash
-# Synthetic scraper health probe (single-review scrape against a place)
+# Synthetic scraper health probe (single-review scrape against a place);
+# also reports whether browser_profile_dir is still signed in to Google
 python start.py health --url "https://maps.app.goo.gl/YOUR_URL"
 
 # Selector hit-rate across recent scrape sessions — detects DOM drift
@@ -366,7 +372,8 @@ Endpoints are organized into 5 tagged groups (visible in `/docs`):
 # Health check (no auth)
 curl http://localhost:8000/
 
-# Scraper health probe — status + counts of empty/degraded/limited sessions (last 24h)
+# Scraper health probe — status, counts of empty/degraded/limited sessions (last 24h)
+# and browser_profile (signed_in / signed_out / unknown / not_configured)
 curl -H "X-API-Key: grs_your_key_here" http://localhost:8000/health/scrape
 
 # Database statistics (places, reviews, sessions, db size)

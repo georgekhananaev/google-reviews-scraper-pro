@@ -66,8 +66,12 @@ def is_signed_in(cookies: Iterable[Dict[str, Any]]) -> bool:
     return any(c.get("name") in SIGN_IN_COOKIES for c in cookies)
 
 
-def profile_signed_in(path: Path) -> bool:
-    """Read Chrome's cookie store in a closed profile and look for a Google sign-in."""
+def profile_signed_in(path: Path) -> Optional[bool]:
+    """
+    Read Chrome's cookie store in the profile and look for a Google sign-in.
+    None when a store exists but can't be read (Chrome may be using it).
+    """
+    unreadable = False
     for relative in ("Default/Network/Cookies", "Default/Cookies"):
         store = path / relative
         if not store.is_file():
@@ -82,10 +86,22 @@ def profile_signed_in(path: Path) -> bool:
             finally:
                 con.close()
         except sqlite3.Error:
+            unreadable = True
             continue
         if rows:
             return True
-    return False
+    return None if unreadable else False
+
+
+def profile_state(config: Dict[str, Any]) -> str:
+    """"not_configured", "signed_in", "signed_out" or "unknown" (store unreadable)."""
+    path = profile_dir(config)
+    if path is None:
+        return "not_configured"
+    signed_in = profile_signed_in(path)
+    if signed_in is None:
+        return "unknown"
+    return "signed_in" if signed_in else "signed_out"
 
 
 def find_chrome() -> Optional[str]:

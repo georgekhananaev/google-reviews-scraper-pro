@@ -432,6 +432,8 @@ async def scrape_health(review_db=Depends(get_review_db)):
         empty_sessions_24h: number of sessions ending with zero reviews
         degraded_sessions_24h: sessions >30% parse errors
         limited_sessions_24h: sessions where Google capped the review list
+        browser_profile: signed_in | signed_out | unknown | not_configured
+            (browser_profile_dir; signed_out makes the status at least degraded)
         last_synthetic_success: ISO ts of most recent non-empty completed session
     """
     try:
@@ -476,12 +478,19 @@ async def scrape_health(review_db=Depends(get_review_db)):
     else:
         status = "unhealthy"
 
+    # An expired sign-in means every scrape gets the capped list.
+    from modules.browser_profile import profile_state
+    browser_profile = profile_state(_config)
+    if browser_profile == "signed_out" and status == "healthy":
+        status = "degraded"
+
     return {
         "status": status,
         "last_session_status": last_status,
         "empty_sessions_24h": empty,
         "degraded_sessions_24h": degraded,
         "limited_sessions_24h": limited,
+        "browser_profile": browser_profile,
         "last_synthetic_success": last_success,
     }
 

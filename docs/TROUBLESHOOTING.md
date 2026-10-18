@@ -299,7 +299,8 @@ NoCredentialsError: Unable to locate credentials
 
 **Log Message:**
 ```
-WARNING  INCOMPLETE: Google showed only 5 of about 746 reviews (limited view for signed-out browsers)
+WARNING  INCOMPLETE: Google showed only 5 of about 746 reviews (limited view for signed-out browsers);
+         set browser_profile_dir to scrape signed in (see README)
 ```
 
 **Cause:** Google shows signed-out browsers only the first few reviews, then a "See more reviews (N)" button that opens a sign-in dialog. Scrolling can't load more. The session is stored with status `limited`.
@@ -316,7 +317,7 @@ python start.py browser-login          # sign in once, then quit that Chrome
 python start.py browser-login --check  # later: is the profile still signed in?
 ```
 
-If the log says `Browser profile is not signed in to Google`, the login expired: run `browser-login` again. See "Signed-In Mode" in the README for the safety rules.
+If the log says `Browser profile is not signed in to Google`, or the warning ends with `the browser profile is not signed in, run: python start.py browser-login`, the login expired: run `browser-login` again. `/health/scrape` (`browser_profile: signed_out`) and `python start.py health` report this too, so monitoring can catch it. See "Signed-In Mode" in the README for the safety rules.
 
 ---
 
