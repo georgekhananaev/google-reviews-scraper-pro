@@ -1811,7 +1811,8 @@ class GoogleReviewsScraper:
                                 if not any(d.is_displayed() for d in dialogs):
                                     continue  # the next iteration picks up what it loaded
                                 ActionChains(driver).send_keys(Keys.ESCAPE).perform()
-                            loaded = len(pane.find_elements(By.CSS_SELECTOR, CARD_SEL))
+                            # Unique reviews: CARD_SEL also matches nested elements.
+                            loaded = len(processed_ids)
                             limited = True
                             self.warning = (
                                 f"Google showed only {loaded} of about {loaded + held_back} "
