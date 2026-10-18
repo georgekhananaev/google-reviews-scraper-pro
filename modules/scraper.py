@@ -897,6 +897,7 @@ class GoogleReviewsScraper:
                 'button[aria-label*="Trier" i]',  # French
                 'button[aria-label*="Ordenar" i]',  # Spanish/Portuguese
                 'button[aria-label*="Sortieren" i]',  # German
+                'button[aria-label*="Ordina" i]',  # Italian
 
                 # Parent container-based selectors
                 'div.m6QErb.Hk4XGb.XiKgde.tLjsW button',
