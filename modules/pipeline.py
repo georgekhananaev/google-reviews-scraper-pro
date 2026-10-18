@@ -81,6 +81,11 @@ class ImageTask(SyncTask):
             self._handler.set_place_id(place_id)
         self._handler.download_all_images(reviews)
 
+    @property
+    def image_count(self) -> int:
+        """Images on disk for the reviews of the last run (0 if it was skipped)."""
+        return self._handler.last_image_count
+
 
 class S3Task(SyncTask):
     name = "s3"
@@ -291,6 +296,13 @@ class PostScrapeRunner:
         for task in self._tasks:
             if hasattr(task, "set_browser_cookies"):
                 task.set_browser_cookies(cookies)
+
+    def image_count(self) -> int | None:
+        """Images on disk for the reviews handled by the image task; None if it is off."""
+        for task in self._tasks:
+            if isinstance(task, ImageTask):
+                return task.image_count if task.enabled else None
+        return None
 
     def set_changed_ids(self, changed_ids: Set[str] | None) -> None:
         """

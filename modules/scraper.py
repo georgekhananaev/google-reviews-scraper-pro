@@ -278,6 +278,8 @@ class GoogleReviewsScraper:
         self._selector_health: SelectorHealth | None = None
         self.place_id: str | None = None
         self.total_reviews: int | None = None
+        # Images on disk for the reviews this run handled (None: downloads off).
+        self.total_images: int | None = None
         # Set when Google showed only part of the review list (limited view).
         self.warning: str | None = None
 
@@ -892,6 +894,37 @@ class GoogleReviewsScraper:
         except Exception as e:
             log.debug(f"Error verifying reviews tab click: {e}")
             return False
+
+    @staticmethod
+    def _collect_fresh_cards(cards: List[WebElement], processed_ids: set, seen: set,
+                             max_reviews: int) -> tuple:
+        """
+        Register this batch's cards in `processed_ids` and return
+        (cards not stored yet, number of cards already stored).
+
+        With max_reviews > 0 it stops once that many reviews were looked at in
+        this run, stored ones included ("check the newest N").
+        """
+        fresh: List[WebElement] = []
+        already_stored = 0
+        for c in cards:
+            if max_reviews > 0 and len(processed_ids) >= max_reviews:
+                break
+            try:
+                cid = c.get_attribute("data-review-id")
+            except StaleElementReferenceException:
+                continue
+            except Exception as e:
+                log.debug(f"Error getting review ID: {e}")
+                continue
+            if not cid or cid in processed_ids:
+                continue
+            processed_ids.add(cid)
+            if cid in seen:
+                already_stored += 1
+            else:
+                fresh.append(c)
+        return fresh, already_stored
 
     def _capped_list(self, driver: Chrome, pane: WebElement):
         """
@@ -1659,7 +1692,6 @@ class GoogleReviewsScraper:
 
                 try:
                     cards = pane.find_elements(By.CSS_SELECTOR, CARD_SEL)
-                    fresh_cards: List[WebElement] = []
 
                     # Check for valid cards
                     if len(cards) == 0:
@@ -1681,22 +1713,10 @@ class GoogleReviewsScraper:
                     else:
                         consecutive_no_cards = 0  # Reset counter when we find cards
 
-                    batch_seen_count = 0  # Cards already in DB (for batch stop)
-                    for c in cards:
-                        try:
-                            cid = c.get_attribute("data-review-id")
-                            if not cid or cid in processed_ids:
-                                continue
-                            processed_ids.add(cid)
-                            if cid in seen:
-                                batch_seen_count += 1
-                                continue
-                            fresh_cards.append(c)
-                        except StaleElementReferenceException:
-                            continue
-                        except Exception as e:
-                            log.debug(f"Error getting review ID: {e}")
-                            continue
+                    # batch_seen_count: cards already in DB (for batch stop)
+                    fresh_cards, batch_seen_count = self._collect_fresh_cards(
+                        cards, processed_ids, seen, max_reviews
+                    )
 
                     batch_total = len(fresh_cards) + batch_seen_count
                     batch_unchanged = batch_seen_count
@@ -1750,11 +1770,6 @@ class GoogleReviewsScraper:
                         idle = 0
                         attempts = 0
 
-                        if max_reviews > 0 and len(seen) >= max_reviews:
-                            log.info("Reached max_reviews limit (%d), stopping.", max_reviews)
-                            idle = 999
-                            break
-
                         # Date-filter early-stop (issue #19). Only meaningful
                         # when sort_by is newest AND the user asked for
                         # mode=early_stop with an `after` boundary.
@@ -1771,6 +1786,10 @@ class GoogleReviewsScraper:
                                     break
                             else:
                                 past_boundary_streak = 0
+
+                    if max_reviews > 0 and len(processed_ids) >= max_reviews:
+                        log.info("Stopping: looked at max_reviews (%d) reviews", max_reviews)
+                        break
 
                     # Batch-level stop: entire scroll iteration was unchanged.
                     # Require min 3 reviews in the batch to avoid false stops
@@ -1917,6 +1936,7 @@ class GoogleReviewsScraper:
                     ),
                     error=self.warning,
                 )
+                self.review_db.refresh_place_total(place_id)
 
             # Post-scrape pipeline: process once, write to all targets.
             # Capture browser cookies BEFORE quitting the driver — the image
@@ -1929,6 +1949,7 @@ class GoogleReviewsScraper:
                 log.debug("Could not extract browser cookies", exc_info=True)
 
             reviews = self.review_db.get_reviews(place_id) if place_id else []
+            self.total_images = 0 if self.config.get("download_images", False) else None
             if reviews:
                 legacy_docs = {
                     r["review_id"]: self._db_review_to_legacy(r) for r in reviews
@@ -1945,6 +1966,7 @@ class GoogleReviewsScraper:
                 runner.set_changed_ids(None if legacy_id else changed_ids)
                 try:
                     runner.run(legacy_docs, place_id, seen=seen)
+                    self.total_images = runner.image_count()
                 finally:
                     runner.close()
 

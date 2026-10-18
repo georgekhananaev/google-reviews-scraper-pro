@@ -70,7 +70,7 @@ def _add_scrape_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--max-reviews", type=int, default=None,
-        help="maximum number of reviews to scrape (0 = unlimited)",
+        help="maximum number of reviews to look at per run, stored ones included (0 = unlimited)",
     )
     parser.add_argument(
         "--max-scroll-attempts", type=int, default=None,

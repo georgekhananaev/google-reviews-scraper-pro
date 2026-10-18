@@ -582,20 +582,21 @@ class ReviewDB:
                                         scrape_mode=scrape_mode)
             stats[result] = stats.get(result, 0) + 1
 
-        # Update place total_reviews
-        count_row = self.backend.fetchone(
-            "SELECT COUNT(*) as cnt FROM reviews "
-            "WHERE place_id = ? AND is_deleted = 0",
+        self.refresh_place_total(place_id)
+        return stats
+
+    def refresh_place_total(self, place_id: str) -> int:
+        """Store the number of visible (not soft-deleted) reviews on the place row."""
+        row = self.backend.fetchone(
+            "SELECT COUNT(*) AS cnt FROM reviews WHERE place_id = ? AND is_deleted = 0",
             (place_id,)
         )
-        if count_row:
-            self.backend.execute(
-                "UPDATE places SET total_reviews = ? WHERE place_id = ?",
-                (count_row["cnt"], place_id)
-            )
-            self.backend.commit()
-
-        return stats
+        total = row["cnt"] if row else 0
+        self.backend.execute(
+            "UPDATE places SET total_reviews = ? WHERE place_id = ?", (total, place_id)
+        )
+        self.backend.commit()
+        return total
 
     def review_changed(self, review_id: str, place_id: str,
                        new_content_hash: str) -> bool:
@@ -954,6 +955,7 @@ class ReviewDB:
         self.backend.commit()
         if result.rowcount > 0:
             self.log_history(review_id, place_id, "soft_delete", actor="cli_hide")
+            self.refresh_place_total(place_id)
             return True
         return False
 
@@ -968,6 +970,7 @@ class ReviewDB:
         self.backend.commit()
         if result.rowcount > 0:
             self.log_history(review_id, place_id, "restore", actor="cli_restore")
+            self.refresh_place_total(place_id)
             return True
         return False
 

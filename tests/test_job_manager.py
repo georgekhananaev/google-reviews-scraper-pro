@@ -24,6 +24,7 @@ class StubScraper:
     def scrape(self):
         self.place_id = "0x882b21e060e098b7:0"
         self.total_reviews = None if self.result is False else 42
+        self.total_images = None if self.result is False else 7
         return self.result
 
 
@@ -45,6 +46,7 @@ def test_completed_job_reports_place_id_and_count(manager):
     assert data["status"] == JobStatus.COMPLETED.value
     assert data["place_id"] == "0x882b21e060e098b7:0"
     assert data["reviews_count"] == 42
+    assert data["images_count"] == 7
 
 
 def test_limited_view_warning_reaches_job(manager):

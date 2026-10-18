@@ -246,7 +246,9 @@ class ScrapeRequest(BaseModel):
     sort_by: Optional[str] = Field(None, description="Sort order: newest, highest, lowest, relevance")
     scrape_mode: Optional[str] = Field(None, description="Scrape mode: new_only, update, or full")
     stop_threshold: Optional[int] = Field(None, description="Consecutive matched batches before stopping")
-    max_reviews: Optional[int] = Field(None, description="Max reviews to scrape (0 = unlimited)")
+    max_reviews: Optional[int] = Field(
+        None, description="Max reviews to look at in this run, stored ones included (0 = unlimited)"
+    )
     max_scroll_attempts: Optional[int] = Field(None, description="Max scroll iterations")
     scroll_idle_limit: Optional[int] = Field(None, description="Max idle iterations with zero new cards")
     download_images: Optional[bool] = Field(None, description="Download images from reviews")

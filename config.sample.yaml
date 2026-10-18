@@ -37,7 +37,7 @@ scrape_mode: "update"
 stop_threshold: 3
 
 # Scroll limits
-max_reviews: 0                  # 0 = unlimited
+max_reviews: 0                  # Reviews to look at per run, stored ones included (0 = unlimited)
 max_scroll_attempts: 50         # Max scroll iterations
 scroll_idle_limit: 15           # Max idle iterations with zero new cards
 

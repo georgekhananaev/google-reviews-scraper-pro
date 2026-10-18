@@ -148,7 +148,7 @@ See `config.sample.yaml` for all available settings and `config.businesses.sampl
 | | `sort_by` | `"newest"` | `newest`, `highest`, `lowest`, `relevance` |
 | | `scrape_mode` | `"update"` | `new_only`, `update`, or `full` |
 | | `stop_threshold` | `3` | Consecutive fully-matched scroll batches before stopping (0 = disabled) |
-| | `max_reviews` | `0` | Max reviews to scrape (0 = unlimited) |
+| | `max_reviews` | `0` | Max reviews to look at per run, already-stored ones included: "check the newest N" (0 = unlimited) |
 | | `max_scroll_attempts` | `50` | Max scroll iterations |
 | | `scroll_idle_limit` | `15` | Max idle iterations with zero new cards |
 | | `browser_profile_dir` | `""` | Chrome profile folder signed in to Google (empty = fresh incognito window). See [Signed-In Mode](#signed-in-mode-getting-past-the-5-review-wall) |
@@ -401,8 +401,8 @@ curl -X POST "http://localhost:8000/scrape" \
 # List all jobs (with optional status filter)
 curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs"
 
-# Check job status (includes place_id and reviews_count once the scrape finishes,
-# plus a warning if Google capped the review list)
+# Check job status (includes place_id, reviews_count and images_count once the scrape
+# finishes, plus a warning if Google capped the review list)
 curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}"
 
 # Start a pending job manually

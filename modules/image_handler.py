@@ -155,6 +155,10 @@ class ImageHandler:
         # wall of identical errors is noise. We aggregate and log a summary.
         self._forbidden_count = 0
 
+        # Images on disk (downloaded now or earlier) after the last
+        # download_all_images() call.
+        self.last_image_count = 0
+
         # Initialize S3 handler
         self.s3_handler = S3Handler(config)
         self.use_s3 = config.get("use_s3", False)
@@ -364,6 +368,7 @@ class ImageHandler:
 
         if not download_tasks:
             log.info("No images to download")
+            self.last_image_count = 0
             return reviews
 
         log.info(
@@ -384,6 +389,8 @@ class ImageHandler:
                     url_to_custom_url[orig_url] = custom_url
                 if dl_url != orig_url:
                     url_to_download_url[orig_url] = dl_url
+
+        self.last_image_count = len(url_to_filename)
 
         # Upload to S3 if enabled
         s3_url_mapping = {}
