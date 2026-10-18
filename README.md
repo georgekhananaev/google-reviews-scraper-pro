@@ -3,13 +3,16 @@
 ![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.2.3-brightgreen)
 ![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
+![CI](https://github.com/georgekhananaev/google-reviews-scraper-pro/actions/workflows/ci.yml/badge.svg)
 ![Last Update](https://img.shields.io/badge/Last%20Updated-April%202026-red)
 
 **FINALLY! A scraper that ACTUALLY WORKS in 2026!** While others break with every Google update, this bad boy keeps on trucking. Say goodbye to the frustration of constantly broken scrapers and hello to a beast that rips through Google's defenses like a hot knife through butter. Multi-business support, SQLite database, MongoDB sync, S3 uploads, and a full CLI toolkit — all in one battle-tested, rock-solid package.
 
 ## Feature Artillery
 
-- **Bulletproof in 2026**: While the competition falls apart, we've cracked Google's latest tricks. Google locked reviews behind a "limited view" in Feb 2026? We bypassed it the same day via search-based navigation — no login needed!
+- **Bulletproof in 2026**: While the competition falls apart, we've cracked Google's latest tricks. Google locked direct place URLs behind a "limited view" in Feb 2026? We route around it via search-based navigation. Google now caps signed-out browsers at the first 5 reviews? We catch it, tell you straight, and let you scrape signed in.
+- **Signed-In Mode**: Point the scraper at a Chrome profile signed in to a throwaway Google account (`browser_profile_dir`) and blow past the 5-review wall. The login stays in that folder: never logged, never handed to the image downloader.
+- **No Silent Failures**: Wrong tab? Capped list? Sort button missing? The scraper checks it's really on the Reviews tab, never clicks random buttons, and marks capped runs `limited` with a loud `INCOMPLETE` warning instead of pretending all is well.
 - **Multi-Business Madness**: Scrape multiple businesses in one run with per-business config overrides. One config to rule them all.
 - **SQLite Fortress**: Primary storage with full audit history, change detection, and per-place isolation. Your data ain't going anywhere.
 - **MongoDB Sync**: Incremental sync — only changed reviews are pushed, unchanged reviews are skipped. Because why waste bandwidth?
@@ -148,6 +151,7 @@ See `config.sample.yaml` for all available settings and `config.businesses.sampl
 | | `max_reviews` | `0` | Max reviews to scrape (0 = unlimited) |
 | | `max_scroll_attempts` | `50` | Max scroll iterations |
 | | `scroll_idle_limit` | `15` | Max idle iterations with zero new cards |
+| | `browser_profile_dir` | `""` | Chrome profile folder signed in to Google (empty = fresh incognito window). See [Signed-In Mode](#signed-in-mode-getting-past-the-5-review-wall) |
 | **Database** | `db_path` | `"reviews.db"` | SQLite database path (auto-created) |
 | **Processing** | `convert_dates` | `true` | Convert relative dates to ISO format |
 | **Images** | `download_images` | `true` | Download review/profile images |
@@ -187,6 +191,35 @@ See `config.sample.yaml` for all available settings and `config.businesses.sampl
 | **Health Probe** | `health.synthetic_url` | `""` | Place URL used by `python start.py health` to verify end-to-end scraping |
 | **Audit** | `audit.retention_days` | `90` | API audit log rows older than this get pruned on API server startup |
 | **Adaptive** | `adaptive.tab_detection_threshold` | `1.5` | Lower = looser tab-matching; `0.0` reverts to pre-v1.2.2 behavior |
+
+## Signed-In Mode (Getting Past the 5-Review Wall)
+
+Since autumn 2026 Google often shows signed-out browsers only the first 5 reviews of a place, followed by a "See more reviews (N)" button that just opens a sign-in dialog. No amount of scrolling gets past that. The scraper spots it, stops right away and tells you straight:
+
+```
+WARNING  INCOMPLETE: Google showed only 5 of about 746 reviews (limited view for signed-out browsers)
+```
+
+The session is stored as `limited`, API jobs carry a `warning`, and `/health/scrape` reports `degraded`. The way past the wall is to scrape signed in:
+
+1. Pick a folder **outside the repo** and put it in `config.yaml`:
+   ```yaml
+   browser_profile_dir: "~/.google-reviews-scraper/browser-profile"
+   ```
+2. Sign that profile in to Google:
+   ```bash
+   python start.py browser-login
+   ```
+   A normal Chrome window opens on Google's sign-in page. Sign in, then quit that Chrome completely (Cmd+Q on macOS). The command tells you whether the sign-in stuck.
+3. Scrape as usual. The log says `Browser profile is signed in to Google`, or warns you when the login has expired (run `browser-login` again). `python start.py browser-login --check` checks without opening Chrome.
+
+**Keep your account safe:**
+
+- Use a Google account made just for this, never your personal or business account. Google may flag or lock accounts that scrape.
+- The profile folder **is** that account's login. Don't commit it, share it, sync it or bake it into a Docker image. It's created owner-only (`chmod 700`), and the usual names (`browser_profile/`, `chrome_profile/`, …) are gitignored in case it ends up inside the repo anyway.
+- The scraper only ever logs "signed in" or "not signed in", never the account name, email or cookies, and Google's sign-in cookies are never passed to the image downloader.
+- If that account has reviewed a place itself, its review shows up in the data like any other public review.
+- Chrome locks a profile while it's open, so scrapes sharing one profile take turns (API jobs queue up for it).
 
 ## Unleashing Hell
 
@@ -332,7 +365,7 @@ Endpoints are organized into 5 tagged groups (visible in `/docs`):
 # Health check (no auth)
 curl http://localhost:8000/
 
-# Scraper health probe — status + counts of empty/degraded sessions (last 24h)
+# Scraper health probe — status + counts of empty/degraded/limited sessions (last 24h)
 curl -H "X-API-Key: grs_your_key_here" http://localhost:8000/health/scrape
 
 # Database statistics (places, reviews, sessions, db size)
@@ -367,7 +400,8 @@ curl -X POST "http://localhost:8000/scrape" \
 # List all jobs (with optional status filter)
 curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs"
 
-# Check job status (includes place_id and reviews_count once the scrape finishes)
+# Check job status (includes place_id and reviews_count once the scrape finishes,
+# plus a warning if Google capped the review list)
 curl -H "X-API-Key: grs_your_key_here" "http://localhost:8000/jobs/{job_id}"
 
 # Start a pending job manually
@@ -470,9 +504,14 @@ reviews.db
 ├── places          — registered businesses with coordinates
 ├── reviews         — all review data with change tracking
 ├── review_history  — audit log of every change (old/new values)
-├── scrape_sessions — session metadata (start, end, counts)
+├── scrape_sessions — session metadata (start, end, counts, status)
+├── place_aliases   — other ids (old or alternate) that point to a place
 └── schema_version  — database migration tracking
 ```
+
+**Place IDs** are Google's full feature ids (`0x…:0x…`). Versions up to 1.2.3 stored them cut in half (`0x…:0`). Such a place moves to its full id automatically the next time it's scraped from the same URL (database rows and image folder included), and the old id keeps working in the API.
+
+**Session status**: `completed`, `limited` (Google capped the list), `empty`, `degraded` (>30% parse errors), `partial` (driver crashed), `rate_limited`, `failed` (for example the Reviews tab could not be opened) or `cancelled`.
 
 ### Images (per-business)
 
@@ -524,7 +563,7 @@ Full snapshot exported after each scrape: `google_reviews.json`
 All reviews in a single collection with `place_id` field for filtering:
 
 ```js
-db.google_reviews.find({ place_id: "0x305037cbd917b293:0" })
+db.google_reviews.find({ place_id: "0x305037cbd917b293:0x9b5b1c32a7f4d6e1" })
 ```
 
 ## The Juicy Data Payload
@@ -534,7 +573,7 @@ Here's what you'll rip out of Google's clutches for each review (and yes, it's *
 ```json
 {
   "review_id": "ChdDSUhNMG9nS0VJQ0FnSUNVck95dDlBRRAB",
-  "place_id": "0x305037cbd917b293:0",
+  "place_id": "0x305037cbd917b293:0x9b5b1c32a7f4d6e1",
   "author": "John Smith",
   "rating": 4.0,
   "description": {
@@ -582,7 +621,9 @@ Here's what you'll rip out of Google's clutches for each review (and yes, it's *
    - **SSL/TLS errors?** If using self-signed certs or local MongoDB, set `mongodb.tls_allow_invalid_certs: true` in your `config.yaml`
 
 3. **"Where Are My Reviews?!" Crisis**
-   - **Google "Limited View" (Feb 2026):** Google now shows a "limited view" to non-logged users on direct place URLs. Our scraper handles this automatically via search-based navigation — just make sure you're on the latest version!
+   - **Only 5 reviews and an `INCOMPLETE` warning?** Google is capping the list for signed-out browsers. Switch on [Signed-In Mode](#signed-in-mode-getting-past-the-5-review-wall).
+   - **Google "Limited View" (Feb 2026):** direct place URLs open a stripped-down page for signed-out users. The scraper navigates via search to get the full place page — just make sure you're on the latest version!
+   - **`Reviews tab is not open after clicking it - stopping`?** The scraper refuses to scrape the wrong tab. Usually a Google layout change: run with `--headless false` to watch, and open an issue with the URL.
    - Make sure your URL isn't garbage — copy directly from the address bar in Google Maps
    - Not all sort options work for all businesses. Try `--sort relevance` if all else fails
    - Some locations have zero reviews. Yes, it happens. No, it's not the scraper's fault.
@@ -667,6 +708,8 @@ python -m pytest tests/ -v
 python -m pytest tests/ -v -k "not s3 and not mongodb and not seleniumbase"
 ```
 
+CI runs the suite on Ubuntu (Python 3.10 and 3.14) and Windows (Python 3.13) for every push and pull request. The MongoDB/S3 connection tests need a local `config.yaml` with those services enabled and skip otherwise.
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
@@ -677,7 +720,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 A: Look, I'm not your lawyer. Google doesn't want you to do it. It violates their ToS. It's your business whether that scares you or not. This tool exists for "research purposes" (wink wink). Use at your own risk, hotshot.
 
 **Q: Will this still work tomorrow/next week/when Google changes stuff?**
-A: Unlike 99% of the GitHub garbage that breaks when Google changes a CSS class, we're battle-hardened veterans of Google's interface wars. We update this beast CONSTANTLY. Google locked reviews behind a "limited view" in Feb 2026? We bypassed it the same day. This thing adapts faster than Google can change.
+A: Unlike 99% of the GitHub garbage that breaks when Google changes a CSS class, we're battle-hardened veterans of Google's interface wars. We update this beast CONSTANTLY. Google locked reviews behind a "limited view" in Feb 2026? We bypassed it the same day. Google started capping signed-out browsers at 5 reviews? We catch it and you scrape signed in. This thing adapts faster than Google can change.
 
 **Q: How do I avoid Google's ban hammer?**
 A: Our undetected-chromedriver does the heavy lifting, but:

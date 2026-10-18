@@ -295,12 +295,39 @@ NoCredentialsError: Unable to locate credentials
 
 ## Scraping Issues
 
+### Issue: Only 5 Reviews Saved (Limited View)
+
+**Log Message:**
+```
+WARNING  INCOMPLETE: Google showed only 5 of about 746 reviews (limited view for signed-out browsers)
+```
+
+**Cause:** Google shows signed-out browsers only the first few reviews, then a "See more reviews (N)" button that opens a sign-in dialog. Scrolling can't load more. The session is stored with status `limited`.
+
+**Solution:** Scrape with a Chrome profile signed in to a Google account used only for scraping:
+
+```yaml
+# config.yaml — keep the folder outside the repo, it holds the account's login
+browser_profile_dir: "~/.google-reviews-scraper/browser-profile"
+```
+
+```bash
+python start.py browser-login          # sign in once, then quit that Chrome
+python start.py browser-login --check  # later: is the profile still signed in?
+```
+
+If the log says `Browser profile is not signed in to Google`, the login expired: run `browser-login` again. See "Signed-In Mode" in the README for the safety rules.
+
+---
+
 ### Issue: Reviews Tab Not Found
 
 **Error Message:**
 ```
 TimeoutException: Reviews tab not found or could not be clicked
 ```
+
+A related message, `Reviews tab is not open after clicking it - stopping`, means a click happened but Google did not switch to the Reviews tab. The scraper stops (session `failed`) instead of saving another tab's review snippets.
 
 **Cause:** Google Maps UI changed or page didn't load properly.
 

@@ -17,6 +17,13 @@ api:
 headless: true                  # Run Chrome without visible browser window
 sort_by: "newest"               # Options: newest, highest, lowest, relevance
 
+# Signed-in Chrome profile (optional). Google often shows signed-out browsers
+# only the first 5 reviews of a place. Point this at a folder OUTSIDE the repo,
+# then run `python start.py browser-login` once and sign in with a Google
+# account used only for scraping. The folder holds that account's login:
+# never commit or share it. Empty = fresh incognito window (default).
+# browser_profile_dir: "~/.google-reviews-scraper/browser-profile"
+
 # Scrape mode — controls how reviews are processed:
 #   "new_only"  — only insert new reviews, skip existing entirely
 #   "update"    — insert new + update changed reviews (default)
