@@ -15,10 +15,12 @@ from modules.scraper import GoogleReviewsScraper
 
 class FakeElement:
     def __init__(self, text="", aria="", cls="", selected=None, index="",
-                 displayed=True, in_main=True, in_card=False):
+                 displayed=True, in_main=True, in_card=False,
+                 popup=None, expanded=None, jsaction=""):
         self.text = text
         self._attrs = {"aria-label": aria, "class": cls, "aria-selected": selected,
-                       "data-tab-index": index}
+                       "data-tab-index": index, "aria-haspopup": popup,
+                       "aria-expanded": expanded, "jsaction": jsaction}
         self._displayed = displayed
         self._in_main = in_main
         self._in_card = in_card
@@ -106,9 +108,23 @@ class TestSortButton:
     def test_dropdown_class_accepted(self, scraper):
         assert scraper._is_sort_button(FakeElement(text="Most relevant", cls="HQzyZ"))
 
-    def test_info_button_with_popup_rejected(self, scraper):
+    def test_current_order_dropdown_accepted(self, scraper):
+        """Thai UI, captured live: the dropdown shows "Most relevant"."""
+        assert scraper._is_sort_button(FakeElement(
+            text="เกี่ยวข้องที่สุด", aria="เกี่ยวข้องที่สุด", cls="FNe70d",
+            popup="true", expanded="false", jsaction="pane.wfvdle83; keydown:pane.wfvdle83"))
+
+    @pytest.mark.parametrize("aria", ["Informazioni", "ข้อมูล", "Information"])
+    def test_info_button_with_popup_rejected(self, scraper, aria):
         """Master picked this one in the Italian UI and lost the review list."""
-        assert not scraper._is_sort_button(FakeElement(aria="Informazioni"))
+        assert not scraper._is_sort_button(FakeElement(
+            aria=aria, cls="oGrB9e", popup="true",
+            jsaction="pane.wfvdle19.reviewlegaldisclosure.toggle; focus:pane.focus"))
+
+    def test_disclosure_toggle_rejected_even_with_text(self, scraper):
+        assert not scraper._is_sort_button(FakeElement(
+            text="Info", popup="true", expanded="false",
+            jsaction="pane.wfvdle19.reviewlegaldisclosure.toggle"))
 
     def test_button_inside_review_card_rejected(self, scraper):
         assert not scraper._is_sort_button(FakeElement(aria="Sort", in_card=True))

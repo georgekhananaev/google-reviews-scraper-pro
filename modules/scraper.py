@@ -907,8 +907,9 @@ class GoogleReviewsScraper:
     def _is_sort_button(self, element: WebElement) -> bool:
         """
         Accept only a visible control in the place panel that carries the sort
-        dropdown class or names sorting in its text or aria-label. The place
-        name is removed first ("Beach Resort" contains "sort").
+        dropdown class, names sorting in its text or aria-label (the place
+        name is removed first: "Beach Resort" contains "sort"), or is the
+        dropdown that shows the current order ("Most relevant").
         """
         if not (element.is_displayed() and element.is_enabled()):
             return False
@@ -921,7 +922,15 @@ class GoogleReviewsScraper:
         label = f"{element.text or ''} {element.get_attribute('aria-label') or ''}".lower()
         if self._place_name:
             label = label.replace(self._place_name.lower(), " ")
-        return _text_contains_any(label, SORT_WORDS)
+        if _text_contains_any(label, SORT_WORDS):
+            return True
+        # The dropdown layout names the current order, not "sort". It is a
+        # menu button with text; the rating "info" button beside it also has
+        # aria-haspopup, but no aria-expanded and no text.
+        return (element.get_attribute("aria-haspopup") == "true"
+                and element.get_attribute("aria-expanded") is not None
+                and bool((element.text or "").strip())
+                and "legaldisclosure" not in (element.get_attribute("jsaction") or ""))
 
     def set_sort(self, driver: Chrome, method: str):
         """
