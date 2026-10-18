@@ -154,7 +154,7 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
 
     if config_path.exists():
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, 'r', encoding='utf-8') as f:
                 user_config = yaml.safe_load(f)
                 if user_config:
                     # Merge configs, with nested dictionary support
@@ -173,8 +173,8 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
     else:
         log.info(f"Config file {config_path} not found, using default configuration")
         # Create a default config file for future use
-        with open(config_path, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False)
+        with open(config_path, 'w', encoding='utf-8') as f:
+            yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
             log.info(f"Created default configuration file at {config_path}")
 
     resolve_aliases(config)
