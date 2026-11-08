@@ -1,0 +1,64 @@
+name: Bug report
+description: Something isn't working, like reviews not loading or a crash.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this! If reviews suddenly stopped loading, please run `python start.py selector-health` first and paste the output below. Google changes the Maps page now and then, and that output tells us which part broke.
+  - type: input
+    id: url
+    attributes:
+      label: Google Maps URL
+      description: A public business where the problem happens.
+      placeholder: https://maps.app.goo.gl/...
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, what you got instead, and the command you ran.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "1.3.1, or a commit hash"
+    validations:
+      required: true
+  - type: input
+    id: locale
+    attributes:
+      label: Maps language / locale
+      placeholder: "en, he, th, ..."
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Docker
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12"
+    validations:
+      required: true
+  - type: textarea
+    id: selector-health
+    attributes:
+      label: Output of `python start.py selector-health`
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: The relevant lines from `logs/`. Please remove anything personal first.
+      render: text
