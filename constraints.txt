@@ -9,7 +9,7 @@
 seleniumbase==4.44.20
 googletrans==4.0.2
 tqdm==4.66.5
-pymongo==4.12.0
+pymongo==4.18.3
 boto3==1.35.99
 fastapi==0.104.1
 uvicorn==0.24.0
