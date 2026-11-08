@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest an idea or an improvement.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Tell us what you're trying to do and where the scraper gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you've tried or considered?
