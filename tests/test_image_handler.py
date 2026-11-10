@@ -72,3 +72,16 @@ def test_traversal_in_place_id_stays_inside_image_dir(tmp_path):
 
     assert base.parent == image_dir
     assert outside.is_dir()  # not moved into the image folder
+
+
+@pytest.mark.parametrize("url, sized", [
+    ("https://lh3.googleusercontent.com/a/abc=s64", True),
+    ("https://yt3.ggpht.com/abc=s64", True),
+    ("https://evil.example/googleusercontent.com/abc=s64", False),
+    ("https://googleusercontent.com.evil.example/abc=s64", False),
+])
+def test_size_suffix_only_for_google_image_hosts(tmp_path, url, sized):
+    handler = ImageHandler({"image_dir": str(tmp_path)})
+    result = handler._build_download_url(url)
+    assert result.startswith(url.split("=")[0])
+    assert result.endswith("-no") is sized
