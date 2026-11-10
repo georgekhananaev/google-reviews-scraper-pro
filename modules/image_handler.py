@@ -36,12 +36,25 @@ _SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]")
 _UNSAFE_DIR_CHARS = re.compile(r'[:*?"<>|/\\]')
 
 
-def _is_allowed_image_host(url: str) -> bool:
+# Google image hosts that accept a "=w<width>-h<height>" size suffix.
+_SIZED_IMAGE_HOSTS = (
+    "googleusercontent.com",
+    "ggpht.com",
+    "gstatic.com",
+)
+
+
+def _host_in(url: str, hosts: Tuple[str, ...]) -> bool:
+    """True when the URL's hostname is one of `hosts` or a subdomain of one."""
     try:
         host = (urlparse(url).hostname or "").lower()
     except Exception:  # noqa: BLE001
         return False
-    return any(host == h or host.endswith("." + h) for h in _ALLOWED_IMAGE_HOSTS)
+    return any(host == h or host.endswith("." + h) for h in hosts)
+
+
+def _is_allowed_image_host(url: str) -> bool:
+    return _host_in(url, _ALLOWED_IMAGE_HOSTS)
 
 
 def _sanitize_filename(name: str) -> str:
@@ -248,7 +261,7 @@ class ImageHandler:
 
     def _build_download_url(self, url: str) -> str:
         """Build a download URL with configured dimensions for Google images."""
-        if 'googleusercontent.com' in url or 'ggpht.com' in url or 'gstatic.com' in url:
+        if _host_in(url, _SIZED_IMAGE_HOSTS):
             base_url = url.split('=')[0]
             return base_url + f"=w{self.max_width}-h{self.max_height}-no"
         return url.split("=")[0]
