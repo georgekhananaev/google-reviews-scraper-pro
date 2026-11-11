@@ -12,6 +12,7 @@ import time
 import traceback
 from pathlib import Path
 from typing import Dict, Any, List
+from urllib.parse import urlparse
 
 from seleniumbase import Driver
 from selenium.common.exceptions import (
@@ -247,6 +248,19 @@ def _text_contains_any(text: str, words: set) -> bool:
     return any(w in low for w in words)
 
 
+def _is_google_consent_url(url: str) -> bool:
+    """True when the URL's hostname is consent.google.com.
+
+    The consent page carries the Maps URL in its query string, and other
+    URLs can carry "consent.google.com" in theirs, so only the hostname counts.
+    """
+    try:
+        host = (urlparse(url or "").hostname or "").lower()
+    except ValueError:
+        return False
+    return host == "consent.google.com"
+
+
 class _DriverSessionLost(Exception):
     """
     Internal signal that the Chrome/WebDriver session has died mid-scrape
@@ -417,8 +431,7 @@ class GoogleReviewsScraper:
         Returns True if consent was handled successfully.
         """
         try:
-            current_url = driver.current_url.lower()
-            if "consent.google.com" not in current_url:
+            if not _is_google_consent_url(driver.current_url):
                 return False
 
             log.info("Detected Google consent page, attempting to accept...")
@@ -428,7 +441,7 @@ class GoogleReviewsScraper:
                 "Accetta tutto", "Accept all", "Accepter tout",
                 "Alle akzeptieren", "Aceptar todo", "Aceitar tudo",
                 "Zaakceptuj wszystko", "Принять все", "全て受け入れる",
-                "全部接受", "全部接受", "모두 수락", "ยอมรับทั้งหมด",
+                "全部接受", "모두 수락", "ยอมรับทั้งหมด",
                 "Tümünü kabul et", "Chấp nhận tất cả", "Elfogad mindent",
                 "Terima semua", "Prihvatiti sve",
             ]
@@ -500,7 +513,7 @@ class GoogleReviewsScraper:
         """
         # First check for full-page consent.google.com redirect
         try:
-            if "consent.google.com" in (driver.current_url or "").lower():
+            if _is_google_consent_url(driver.current_url):
                 return self.handle_google_consent(driver)
         except Exception:
             pass

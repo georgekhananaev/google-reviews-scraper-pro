@@ -4,6 +4,9 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+### Fixed
+- **Stuck on Google's consent page** (PR #28 by @lollo03) — visitors from the EU can be redirected to the full-page `consent.google.com` screen instead of Google Maps, and the scraper waited there because `dismiss_cookies` only knew the cookie overlay. It now recognises that page by its hostname and clicks through it ("Accept all" in 17 languages, with selector fallbacks), both when a place loads and when the place name is read. Tests added in `tests/test_scraper_consent.py`.
+
 ## [1.3.1] - 2026-10-19
 
 ### Added
