@@ -492,7 +492,16 @@ def _run_health(config, args):
         print("No synthetic URL configured. Pass --url or set health.synthetic_url in config.yaml.")
         sys.exit(2)
 
+    from modules.browser_profile import profile_state
     from modules.scraper import GoogleReviewsScraper
+
+    state = profile_state(config)
+    if state != "not_configured":
+        print({
+            "signed_in": "Browser profile: signed in to Google",
+            "signed_out": "Browser profile: NOT signed in to Google. Run: python start.py browser-login",
+            "unknown": "Browser profile: in use by Chrome, sign-in state unknown",
+        }[state])
 
     probe_config = dict(config)
     probe_config["url"] = synthetic_url
@@ -510,10 +519,49 @@ def _run_health(config, args):
         print(f"Probe raised: {e}")
         sys.exit(1)
 
-    if ok:
+    if ok and scraper.warning:
+        print(f"DEGRADED — synthetic scrape of {synthetic_url} succeeded, but {scraper.warning}.")
+    elif ok and state == "signed_out":
+        print(f"DEGRADED — synthetic scrape of {synthetic_url} succeeded, but the browser profile "
+              "is not signed in, so full scrapes stop at the first few reviews.")
+    elif ok:
         print(f"HEALTHY — synthetic scrape of {synthetic_url} succeeded.")
     else:
         print(f"UNHEALTHY — synthetic scrape of {synthetic_url} returned no reviews.")
+        sys.exit(1)
+
+
+def _run_browser_login(config, args):
+    """Sign a Chrome profile in to Google so scrapes get the full review list."""
+    import sys
+    from modules.browser_profile import (
+        find_chrome, open_login_window, prepare_profile_dir, profile_dir, profile_signed_in,
+    )
+
+    path = profile_dir({"browser_profile_dir": args.profile_dir or config.get("browser_profile_dir")})
+    if path is None:
+        print("No profile folder. Set browser_profile_dir in config.yaml or pass --profile-dir.")
+        sys.exit(2)
+    prepare_profile_dir(path)
+
+    if not args.check:
+        chrome = find_chrome()
+        if not chrome:
+            print("Chrome not found. Install Google Chrome or set CHROME_BIN to its path.")
+            sys.exit(2)
+        print("A Chrome window opens on Google's sign-in page.")
+        print("Sign in with a Google account used only for scraping (not your main one),")
+        print("then quit that Chrome completely (Cmd+Q on macOS, close all windows elsewhere).")
+        open_login_window(chrome, path)
+
+    signed_in = profile_signed_in(path)
+    if signed_in:
+        print("Profile is signed in to Google. Scrapes using browser_profile_dir now run signed in.")
+    elif signed_in is None:
+        print("Can't read the profile while Chrome is using it. Quit that Chrome and run --check again.")
+        sys.exit(1)
+    else:
+        print("Profile is NOT signed in to Google. Run: python start.py browser-login")
         sys.exit(1)
 
 
@@ -608,6 +656,7 @@ def main():
         "selector-health": _run_selector_health,
         "db-vacuum": _run_db_vacuum,
         "health": _run_health,
+        "browser-login": _run_browser_login,
     }
 
     handler = commands.get(args.command)

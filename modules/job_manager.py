@@ -42,7 +42,9 @@ class ScrapingJob:
     progress: Dict[str, Any] = None
     cancel_event: threading.Event = None
     _scraper: Optional[Any] = None
-    
+    place_id: Optional[str] = None
+    warning: Optional[str] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert job to dictionary for JSON serialization"""
         data = {
@@ -57,6 +59,8 @@ class ScrapingJob:
             "reviews_count": self.reviews_count,
             "images_count": self.images_count,
             "progress": self.progress,
+            "place_id": self.place_id,
+            "warning": self.warning,
         }
         return data
 
@@ -172,7 +176,9 @@ class JobManager:
                 elif success:
                     job.status = JobStatus.COMPLETED
                     job.completed_at = datetime.now()
-                    job.progress = {"stage": "completed", "message": "Scraping completed successfully"}
+                    job.warning = getattr(scraper, 'warning', None)
+                    job.progress = {"stage": "completed",
+                                    "message": job.warning or "Scraping completed successfully"}
                 else:
                     job.status = JobStatus.FAILED
                     job.completed_at = datetime.now()
@@ -181,6 +187,7 @@ class JobManager:
 
                 job.reviews_count = getattr(scraper, 'total_reviews', None)
                 job.images_count = getattr(scraper, 'total_images', None)
+                job.place_id = getattr(scraper, 'place_id', None)
                 job._scraper = None
 
             log.info(f"Completed scraping job {job_id}")

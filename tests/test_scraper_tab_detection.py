@@ -145,3 +145,45 @@ class TestTabDetection:
         # Empty tab still scores 0, stays rejected.
         tab = MockTab(data_tab_index="1", cls="review")
         assert scraper.is_reviews_tab(tab)
+
+
+class TestPlaceNameInLabel:
+    """Google embeds the place name in every tab's aria-label (issue #25).
+
+    Words inside the name must neither cancel a real Reviews match
+    ("Community Services") nor create a false one ("Davis" contains "avis").
+    """
+
+    def test_penalty_word_in_name_accepted(self, scraper):
+        scraper._place_name = "Caledon Community Services"
+        tab = MockTab(aria_label="Reviews for Caledon Community Services",
+                      text="Reviews", data_tab_index="1")
+        assert scraper.is_reviews_tab(tab)
+
+    def test_penalty_word_in_name_accepted_without_known_name(self, scraper):
+        tab = MockTab(aria_label="Reviews for Caledon Community Services",
+                      text="Reviews", data_tab_index="1")
+        assert scraper.is_reviews_tab(tab)
+
+    def test_italian_penalty_word_in_name_accepted(self, scraper):
+        scraper._place_name = "Caledon Community Services"
+        tab = MockTab(aria_label="Recensioni su Caledon Community Services",
+                      text="Recensioni", data_tab_index="1")
+        assert scraper.is_reviews_tab(tab)
+
+    def test_menu_tab_of_place_named_menu_rejected(self, scraper):
+        scraper._place_name = "The Menu House"
+        tab = MockTab(aria_label="Menu for The Menu House", text="Menu",
+                      data_tab_index="1")
+        assert not scraper.is_reviews_tab(tab)
+
+    def test_review_word_in_name_does_not_accept_hidden_menu_tab(self, scraper):
+        scraper._place_name = "Davis Diner"
+        tab = MockTab(aria_label="Menu for Davis Diner", text="",
+                      data_tab_index="1")
+        assert not scraper.is_reviews_tab(tab)
+
+    def test_review_word_in_name_does_not_accept_hidden_overview_tab(self, scraper):
+        scraper._place_name = "The Review Bar"
+        tab = MockTab(aria_label="Overview of The Review Bar", text="")
+        assert not scraper.is_reviews_tab(tab)

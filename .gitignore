@@ -75,6 +75,14 @@ images/
 downloaded_images/
 
 # -----------------------------------------------------------
+# Signed-in Chrome profiles (hold Google login cookies)
+# -----------------------------------------------------------
+browser_profile/
+browser-profile/
+chrome_profile/
+chrome-profile/
+
+# -----------------------------------------------------------
 # SeleniumBase Files
 # -----------------------------------------------------------
 downloaded_files/

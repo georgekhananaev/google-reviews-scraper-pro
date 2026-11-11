@@ -295,12 +295,40 @@ NoCredentialsError: Unable to locate credentials
 
 ## Scraping Issues
 
+### Issue: Only 5 Reviews Saved (Limited View)
+
+**Log Message:**
+```
+WARNING  INCOMPLETE: Google showed only 5 of about 746 reviews (limited view for signed-out browsers);
+         set browser_profile_dir to scrape signed in (see README)
+```
+
+**Cause:** Google shows signed-out browsers only the first few reviews, then a "See more reviews (N)" button that opens a sign-in dialog. Scrolling can't load more. The session is stored with status `limited`.
+
+**Solution:** Scrape with a Chrome profile signed in to a Google account used only for scraping:
+
+```yaml
+# config.yaml — keep the folder outside the repo, it holds the account's login
+browser_profile_dir: "~/.google-reviews-scraper/browser-profile"
+```
+
+```bash
+python start.py browser-login          # sign in once, then quit that Chrome
+python start.py browser-login --check  # later: is the profile still signed in?
+```
+
+If the log says `Browser profile is not signed in to Google`, or the warning ends with `the browser profile is not signed in, run: python start.py browser-login`, the login expired: run `browser-login` again. `/health/scrape` (`browser_profile: signed_out`) and `python start.py health` report this too, so monitoring can catch it. See "Signed-In Mode" in the README for the safety rules.
+
+---
+
 ### Issue: Reviews Tab Not Found
 
 **Error Message:**
 ```
 TimeoutException: Reviews tab not found or could not be clicked
 ```
+
+A related message, `Reviews tab is not open after clicking it - stopping`, means a click happened but Google did not switch to the Reviews tab. The scraper stops (session `failed`) instead of saving another tab's review snippets.
 
 **Cause:** Google Maps UI changed or page didn't load properly.
 
@@ -506,16 +534,18 @@ PermissionError: [Errno 13] Permission denied
 
 ### Issue: Config File Not Found
 
-**Error Message:**
+**Log Message:**
 ```
-FileNotFoundError: config.yaml not found
+Config file config.yaml not found, using defaults (copy config.sample.yaml to config.yaml to customize)
 ```
+
+The scraper runs with built-in defaults (no MongoDB, no S3, no extra fields) and does not create the file for you.
 
 **Solution:**
 
-1. **Create config.yaml** from example:
+1. **Create config.yaml** from the sample:
    ```bash
-   cp examples/config-example.txt config.yaml
+   cp config.sample.yaml config.yaml
    ```
 
 2. **Specify custom path:**

@@ -1,5 +1,7 @@
 """Tests for place ID extraction from various URL formats."""
 
+from urllib.parse import urlparse
+
 import pytest
 
 from modules.place_id import extract_place_id, canonicalize_url
@@ -66,7 +68,7 @@ class TestCanonicalizeUrl:
 
     def test_lowercase_host(self):
         result = canonicalize_url("https://WWW.GOOGLE.COM/maps/place/Test")
-        assert "www.google.com" in result
+        assert urlparse(result).hostname == "www.google.com"
 
     def test_strip_trailing_slash(self):
         result = canonicalize_url("https://google.com/maps/place/Test/")

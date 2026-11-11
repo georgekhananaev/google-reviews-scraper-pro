@@ -129,7 +129,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Google Reviews Scraper API",
     description="REST API for triggering and managing Google Maps review scraping jobs",
-    version="1.2.3",
+    version="1.3.1",
     lifespan=lifespan
 )
 
@@ -246,7 +246,9 @@ class ScrapeRequest(BaseModel):
     sort_by: Optional[str] = Field(None, description="Sort order: newest, highest, lowest, relevance")
     scrape_mode: Optional[str] = Field(None, description="Scrape mode: new_only, update, or full")
     stop_threshold: Optional[int] = Field(None, description="Consecutive matched batches before stopping")
-    max_reviews: Optional[int] = Field(None, description="Max reviews to scrape (0 = unlimited)")
+    max_reviews: Optional[int] = Field(
+        None, description="Max reviews to look at in this run, stored ones included (0 = unlimited)"
+    )
     max_scroll_attempts: Optional[int] = Field(None, description="Max scroll iterations")
     scroll_idle_limit: Optional[int] = Field(None, description="Max idle iterations with zero new cards")
     download_images: Optional[bool] = Field(None, description="Download images from reviews")
@@ -271,6 +273,10 @@ class JobResponse(BaseModel):
     reviews_count: Optional[int] = None
     images_count: Optional[int] = None
     progress: Optional[Dict[str, Any]] = None
+    place_id: Optional[str] = None
+    warning: Optional[str] = Field(
+        None, description="Set when Google showed only part of the review list (limited view)"
+    )
 
 
 class JobStatsResponse(BaseModel):
@@ -410,7 +416,7 @@ async def root():
     return {
         "message": "Google Reviews Scraper API is running",
         "status": "healthy",
-        "version": "1.2.3"
+        "version": "1.3.1"
     }
 
 
@@ -425,6 +431,9 @@ async def scrape_health(review_db=Depends(get_review_db)):
         last_session_status: most recent completed session's status
         empty_sessions_24h: number of sessions ending with zero reviews
         degraded_sessions_24h: sessions >30% parse errors
+        limited_sessions_24h: sessions where Google capped the review list
+        browser_profile: signed_in | signed_out | unknown | not_configured
+            (browser_profile_dir; signed_out makes the status at least degraded)
         last_synthetic_success: ISO ts of most recent non-empty completed session
     """
     try:
@@ -443,6 +452,7 @@ async def scrape_health(review_db=Depends(get_review_db)):
     last_success = None
     empty = 0
     degraded = 0
+    limited = 0
     for row in recent:
         completed_at = row.get("completed_at") or ""
         try:
@@ -455,10 +465,12 @@ async def scrape_health(review_db=Depends(get_review_db)):
             empty += 1
         if row["status"] == "degraded":
             degraded += 1
+        if row["status"] == "limited":
+            limited += 1
         if last_success is None and row["status"] == "completed" and (row.get("reviews_found") or 0) > 0:
             last_success = completed_at
 
-    total = empty + degraded
+    total = empty + degraded + limited
     if total == 0:
         status = "healthy"
     elif total < 3:
@@ -466,11 +478,19 @@ async def scrape_health(review_db=Depends(get_review_db)):
     else:
         status = "unhealthy"
 
+    # An expired sign-in means every scrape gets the capped list.
+    from modules.browser_profile import profile_state
+    browser_profile = profile_state(_config)
+    if browser_profile == "signed_out" and status == "healthy":
+        status = "degraded"
+
     return {
         "status": status,
         "last_session_status": last_status,
         "empty_sessions_24h": empty,
         "degraded_sessions_24h": degraded,
+        "limited_sessions_24h": limited,
+        "browser_profile": browser_profile,
         "last_synthetic_success": last_success,
     }
 
@@ -666,6 +686,12 @@ async def get_place(place_id: str, review_db=Depends(get_review_db)):
     return PlaceResponse(**place)
 
 
+def _current_place_id(review_db, place_id: str) -> str:
+    """Map an old place id (stored as an alias) to the current one."""
+    place = review_db.get_place(place_id)
+    return place["place_id"] if place else place_id
+
+
 # --- Reviews Router ---
 reviews_router = APIRouter(tags=["Reviews"], dependencies=[Depends(require_api_key)])
 
@@ -683,6 +709,7 @@ async def list_reviews(
     place = review_db.get_place(place_id)
     if not place:
         raise HTTPException(status_code=404, detail="Place not found")
+    place_id = place["place_id"]  # an old id (alias) maps to the current one
 
     total = review_db.count_reviews(place_id, include_deleted=include_deleted)
     rows = review_db.get_reviews(place_id, limit=limit, offset=offset,
@@ -697,7 +724,7 @@ async def list_reviews(
                      summary="Get Single Review")
 async def get_review(place_id: str, review_id: str, review_db=Depends(get_review_db)):
     """Get a single review by ID."""
-    row = review_db.get_review(review_id, place_id)
+    row = review_db.get_review(review_id, _current_place_id(review_db, place_id))
     if not row:
         raise HTTPException(status_code=404, detail="Review not found")
     return ReviewResponse(**_clean_review(row))
@@ -709,6 +736,7 @@ async def get_review(place_id: str, review_id: str, review_db=Depends(get_review
 async def get_review_history(place_id: str, review_id: str,
                               review_db=Depends(get_review_db)):
     """Get the full change history for a specific review."""
+    place_id = _current_place_id(review_db, place_id)
     row = review_db.get_review(review_id, place_id)
     if not row:
         raise HTTPException(status_code=404, detail="Review not found")

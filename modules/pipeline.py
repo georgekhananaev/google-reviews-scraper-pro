@@ -16,7 +16,7 @@ from typing import Dict, Any, Set
 
 from modules.date_converter import DateConverter
 from modules.date_filter import DateFilter
-from modules.image_handler import ImageHandler
+from modules.image_handler import ImageHandler, place_image_dir
 from modules.s3_handler import S3Handler
 
 log = logging.getLogger("scraper")
@@ -81,6 +81,11 @@ class ImageTask(SyncTask):
             self._handler.set_place_id(place_id)
         self._handler.download_all_images(reviews)
 
+    @property
+    def image_count(self) -> int:
+        """Images on disk for the reviews of the last run (0 if it was skipped)."""
+        return self._handler.last_image_count
+
 
 class S3Task(SyncTask):
     name = "s3"
@@ -103,11 +108,11 @@ class S3Task(SyncTask):
 
         # Collect local files from reviews
         files_to_upload: Dict[str, tuple] = {}
+        base = place_image_dir(self._image_dir, place_id) if place_id else self._image_dir
         for review in reviews.values():
             # Review images
             for filename in review.get("local_images", []):
                 if filename and filename not in files_to_upload:
-                    base = self._image_dir / place_id if place_id else self._image_dir
                     local_path = base / "reviews" / filename
                     if local_path.exists():
                         files_to_upload[filename] = (local_path, False)
@@ -115,7 +120,6 @@ class S3Task(SyncTask):
             # Profile picture
             pp = review.get("local_profile_picture")
             if pp and pp not in files_to_upload:
-                base = self._image_dir / place_id if place_id else self._image_dir
                 local_path = base / "profiles" / pp
                 if local_path.exists():
                     files_to_upload[pp] = (local_path, True)
@@ -292,6 +296,13 @@ class PostScrapeRunner:
         for task in self._tasks:
             if hasattr(task, "set_browser_cookies"):
                 task.set_browser_cookies(cookies)
+
+    def image_count(self) -> int | None:
+        """Images on disk for the reviews handled by the image task; None if it is off."""
+        for task in self._tasks:
+            if isinstance(task, ImageTask):
+                return task.image_count if task.enabled else None
+        return None
 
     def set_changed_ids(self, changed_ids: Set[str] | None) -> None:
         """
