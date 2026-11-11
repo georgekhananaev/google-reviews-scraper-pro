@@ -64,6 +64,12 @@ for (const b of pane.querySelectorAll('button')) {
 return null;
 """
 CARD_SEL = "div[data-review-id]"
+# Full-page consent screen (consent.google.com). The jsname of "Accept all"
+# doesn't depend on the page language; the fallback takes any button of the
+# consent form.
+CONSENT_ACCEPT_BTN = 'button[jsname="b3VHJd"]'
+CONSENT_FALLBACK_BTN = 'form[action*="consent"] button, button.UywwFc-LgbsSe'
+CONSENT_WAIT_SECONDS = 10
 COOKIE_BTN = ('button[aria-label*="Accept" i],'
               'button[jsname="hZCF7e"],'
               'button[data-mdc-dialog-action="accept"]')
@@ -424,11 +430,27 @@ class GoogleReviewsScraper:
         log.info("SeleniumBase UC driver setup completed successfully")
         return driver
 
+    def _click_first_displayed(self, driver: Chrome, selector: str) -> bool:
+        """Click the first visible element matching the CSS selector."""
+        try:
+            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+        except Exception as e:
+            log.debug(f"Error looking up {selector}: {e}")
+            return False
+        for elem in elements:
+            try:
+                if elem.is_displayed():
+                    elem.click()
+                    return True
+            except Exception as e:
+                log.debug(f"Error clicking {selector}: {e}")
+        return False
+
     def handle_google_consent(self, driver: Chrome) -> bool:
         """
         Handle Google consent page (consent.google.com) if redirected there.
         This is a full-page redirect, not just an overlay dialog.
-        Returns True if consent was handled successfully.
+        Returns True once the browser has left the consent page.
         """
         try:
             if not _is_google_consent_url(driver.current_url):
@@ -436,68 +458,18 @@ class GoogleReviewsScraper:
 
             log.info("Detected Google consent page, attempting to accept...")
 
-            # Common "Accept all" button texts across languages
-            consent_texts = [
-                "Accetta tutto", "Accept all", "Accepter tout",
-                "Alle akzeptieren", "Aceptar todo", "Aceitar tudo",
-                "Zaakceptuj wszystko", "Принять все", "全て受け入れる",
-                "全部接受", "모두 수락", "ยอมรับทั้งหมด",
-                "Tümünü kabul et", "Chấp nhận tất cả", "Elfogad mindent",
-                "Terima semua", "Prihvatiti sve",
-            ]
-
-            for text in consent_texts:
-                try:
-                    xpath = (
-                        f'//button[.//span[contains(text(), "{text}")]]'
-                        f' | //button[contains(text(), "{text}")]'
-                    )
-                    buttons = driver.find_elements(By.XPATH, xpath)
-                    for btn in buttons:
-                        try:
-                            if btn.is_displayed():
-                                btn.click()
-                                log.info(f"Clicked consent button with text: {text}")
-                                time.sleep(2)
-                                return True
-                        except Exception:
-                            continue
-                except Exception:
+            for selector in (CONSENT_ACCEPT_BTN, CONSENT_FALLBACK_BTN):
+                if not self._click_first_displayed(driver, selector):
                     continue
-
-            # Fallback: try by class pattern from user report
-            try:
-                buttons = driver.find_elements(
-                    By.CSS_SELECTOR, 'button[jsname="b3VHJd"]'
-                )
-                for btn in buttons:
-                    try:
-                        if btn.is_displayed():
-                            btn.click()
-                            log.info("Clicked consent button by jsname selector")
-                            time.sleep(2)
-                            return True
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-
-            # Fallback: any button in a consent form
-            try:
-                buttons = driver.find_elements(
-                    By.CSS_SELECTOR, 'form[action*="consent"] button, button.UywwFc-LgbsSe'
-                )
-                for btn in buttons:
-                    try:
-                        if btn.is_displayed():
-                            btn.click()
-                            log.info("Clicked consent form button (fallback)")
-                            time.sleep(2)
-                            return True
-                    except Exception:
-                        continue
-            except Exception:
-                pass
+                log.info(f"Clicked consent button: {selector}")
+                try:
+                    WebDriverWait(driver, CONSENT_WAIT_SECONDS).until(
+                        lambda d: not _is_google_consent_url(d.current_url)
+                    )
+                    return True
+                except TimeoutException:
+                    log.warning("Still on the Google consent page after clicking")
+                    return False
 
             log.warning("Could not find consent button on Google consent page")
             return False
@@ -628,6 +600,9 @@ class GoogleReviewsScraper:
             log.info(f"Trying search-based navigation: {search_url}")
             driver.get(search_url)
             time.sleep(5)
+            if self.handle_google_consent(driver):
+                # Accepting sends the browser on to the search page.
+                time.sleep(5)
 
             # Check if we landed on a place page with full content (tabs visible)
             tabs = driver.find_elements(By.CSS_SELECTOR, '[role="tab"]')
