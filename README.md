@@ -68,6 +68,38 @@ python start.py
 
 The SQLite database (`reviews.db`) is created automatically on first run.
 
+### Or Run It in Docker
+
+No Python or Chrome on your machine? The image brings its own Chromium, on Intel/AMD and on ARM (Apple Silicon, Raspberry Pi):
+
+```bash
+docker build -t google-reviews-scraper-pro .
+mkdir -p data
+docker run --rm --shm-size=1g -v "$PWD/data:/data" google-reviews-scraper-pro \
+  --url "https://maps.app.goo.gl/YOUR_PLACE"
+```
+
+Everything lands in `./data`: `reviews.db`, `review_images/`, `logs/` and the JSON export. Drop your `config.yaml` in there too and the scraper picks it up. Anything after the image name is passed to `start.py`, so `export`, `db-stats` and friends work the same way.
+
+Tagged releases are also published to `ghcr.io/georgekhananaev/google-reviews-scraper-pro`, so you can skip the build and `docker run` that name instead.
+
+Want the API server and MongoDB as well? `docker-compose.yml` wires them up:
+
+```bash
+mkdir -p data
+docker compose up -d api                              # API on http://localhost:8000/docs
+docker compose run --rm scraper --url "https://maps.app.goo.gl/YOUR_PLACE"
+```
+
+To sync into that MongoDB, set `use_mongodb: true` and `mongodb.uri: "mongodb://mongo:27017"` in `data/config.yaml`.
+
+Good to know:
+
+- Keep `--shm-size=1g`. Chrome crashes on long review lists with Docker's default of 64 MB.
+- The container runs signed out, so Google's 5-review wall (see [Signed-In Mode](#signed-in-mode-getting-past-the-5-review-wall)) applies. The one-time `browser-login` needs a visible Chrome window, which a container doesn't have, so use the local install when you need full review lists.
+- On a Linux host the container writes to `./data` as user ID 1000. If your own ID is different (`id -u` tells you), add `--user "$(id -u):$(id -g)"` to `docker run` and the files are yours. Create `data` yourself as shown above; if Docker creates it, it belongs to root.
+- `docker run --rm --entrypoint python google-reviews-scraper-pro /app/docker/check_chrome.py` checks that Chrome starts in the container, without touching Google.
+
 ## Fine-Tuning Your Beast
 
 Look, this isn't some one-size-fits-all garbage. You've got full control over every aspect.

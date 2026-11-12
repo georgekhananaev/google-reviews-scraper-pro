@@ -1,0 +1,49 @@
+# Scraper, API server and MongoDB together.
+#
+#   mkdir -p data                                        # once, so the folder is yours and not root's
+#   docker compose run --rm scraper --url "<maps url>"   # one scrape, then exit
+#   docker compose up -d api                             # API on http://localhost:8000/docs
+#
+# Everything the scraper reads and writes lives in ./data on your machine:
+# config.yaml, reviews.db, review_images/, logs/ and the JSON export.
+# The containers write there as user ID 1000.
+# To sync to the MongoDB below, set this in ./data/config.yaml:
+#
+#   use_mongodb: true
+#   mongodb:
+#     uri: "mongodb://mongo:27017"
+
+services:
+  scraper:
+    build: .
+    image: google-reviews-scraper-pro
+    profiles: ["cli"]       # only runs when you ask for it with `docker compose run`
+    shm_size: "1gb"         # Chrome crashes on big pages with Docker's default of 64 MB
+    volumes:
+      - ./data:/data
+    depends_on:
+      - mongo
+
+  api:
+    build: .
+    image: google-reviews-scraper-pro
+    entrypoint: ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+    shm_size: "1gb"
+    ports:
+      - "127.0.0.1:8000:8000"   # reachable from this machine only
+    volumes:
+      - ./data:/data
+    depends_on:
+      - mongo
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:8
+    ports:
+      - "127.0.0.1:27017:27017" # no password is set, so keep it on this machine only
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
