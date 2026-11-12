@@ -8,6 +8,34 @@
 
 **FINALLY! A scraper that ACTUALLY WORKS in 2026!** While others break with every Google update, this bad boy keeps on trucking. Say goodbye to the frustration of constantly broken scrapers and hello to a beast that rips through Google's defenses like a hot knife through butter. Multi-business support, SQLite database, MongoDB sync, S3 uploads, and a full CLI toolkit — all in one battle-tested, rock-solid package.
 
+## Quick Start (60 Seconds)
+
+```bash
+git clone https://github.com/georgekhananaev/google-reviews-scraper-pro.git
+cd google-reviews-scraper-pro
+pip install -r requirements.txt
+python start.py --url "https://maps.app.goo.gl/YOUR_PLACE"
+```
+
+That's it. Reviews land in `reviews.db` and `google_reviews.json`, photos in `review_images/`. You need Python 3.10+ and Chrome. Rather not install anything? [Run it in Docker](#or-run-it-in-docker).
+
+Only 5 reviews came back? That's Google's cap for signed-out browsers, and [Signed-In Mode](#signed-in-mode-getting-past-the-5-review-wall) gets past it.
+
+## Contents
+
+- [Features](#feature-artillery)
+- [Requirements](#battle-station-requirements)
+- [Install](#deployment-instructions), or [run it in Docker](#or-run-it-in-docker)
+- [Configuration](#fine-tuning-your-beast)
+- [Signed-In Mode](#signed-in-mode-getting-past-the-5-review-wall)
+- [Command-line recipes](#unleashing-hell)
+- [API server](#api-server-mode)
+- [Output structure](#output-structure) and [a sample review](#the-juicy-data-payload)
+- [Troubleshooting](#when-shit-hits-the-fan)
+- [Cloud storage (S3 / R2 / MinIO)](#cloud-storage-setup-s3--r2--minio)
+- [Running tests](#running-tests)
+- [FAQ](#faqs-from-the-trenches)
+
 ## Feature Artillery
 
 - **Bulletproof in 2026**: While the competition falls apart, we've cracked Google's latest tricks. Google locked direct place URLs behind a "limited view" in Feb 2026? We route around it via search-based navigation. Google now caps signed-out browsers at the first 5 reviews? We catch it, tell you straight, and let you scrape signed in.
@@ -772,8 +800,38 @@ A: Our undetected-chromedriver does the heavy lifting, but:
 **Q: Can this handle enterprise-level scraping (10k+ reviews)?**
 A: Damn straight. We've pulled 50k+ reviews without breaking a sweat. The SQLite + MongoDB combo isn't just for show — it's made for serious volume. Just make sure your machine has the RAM to handle it.
 
+**Q: Where does `config.yaml` go?**
+A: In the repo root, next to `start.py`. Copy `config.sample.yaml` to `config.yaml` and edit it. In Docker it goes in the `data` folder you mount.
+
+**Q: I only get 5 reviews. What gives?**
+A: Google caps signed-out browsers at the first 5 reviews of a place. [Signed-In Mode](#signed-in-mode-getting-past-the-5-review-wall) gets you the rest.
+
+**Q: Can I scrape only a certain time period?**
+A: Yes. Use `--after 2025-06-01 --before 2025-09-30`, or the `date_filter` block in `config.yaml`. With `sort_by: newest` and `mode: early_stop` it stops scrolling once it reaches older reviews.
+
+**Q: How exact are the review dates?**
+A: As exact as Google lets them be. Google only shows relative dates ("2 weeks ago", "3 years ago"), so the ISO date is worked out from that. It's close for recent reviews and gets rougher with age: a review from "3 years ago" gets a date three years before the scrape. Empty dates on a non-English page mean you're on a version before 1.0.3; update and they parse in 25+ languages.
+
+**Q: Does it capture the per-category ratings on hotels and restaurants (Service, Food, Rooms)?**
+A: Yes, since v1.2.2. They're in `sub_ratings` on each review.
+
+**Q: Do short links like `maps.app.goo.gl/...` work?**
+A: Yes. Short links and full Google Maps place URLs both work.
+
+**Q: The scraper sits on a Google consent page and never reaches Maps.**
+A: That's the full-page consent screen Google shows visitors from the EU. It's handled after v1.3.1, so use the latest `master` until the next release is out.
+
+**Q: I have a question, not a bug. Where do I ask?**
+A: In [Discussions (Q&A)](https://github.com/georgekhananaev/google-reviews-scraper-pro/discussions/categories/q-a). Answers stay searchable there for the next person.
+
 **Q: I found a bug/have a killer feature idea!**
 A: Jump on GitHub and file an issue or PR. But do your homework first — if you're reporting something already in the README, we'll roast you publicly.
+
+## Star History
+
+If this saved you some time, a star helps other people find it.
+
+[![Star History Chart](https://api.star-history.com/svg?repos=georgekhananaev/google-reviews-scraper-pro&type=Date)](https://star-history.com/#georgekhananaev/google-reviews-scraper-pro&Date)
 
 ## Changelog
 
