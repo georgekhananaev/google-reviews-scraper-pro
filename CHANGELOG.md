@@ -4,8 +4,13 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-12
+
 ### Added
 - **Docker image** — a `Dockerfile` with Chromium and its driver included (Intel/AMD and ARM), running as a non-root user with all data in `/data`. `docker-compose.yml` adds the API server and MongoDB. A new workflow builds the image on every push and pull request, starts Chrome inside it with the network off, and publishes version tags to `ghcr.io/georgekhananaev/google-reviews-scraper-pro`. The container runs signed out, so Google's 5-review wall applies there; see the README.
+
+### Changed
+- **README: easier to land on** — a quick start at the top, a contents list, and FAQ entries for the questions people asked in issues and discussions (where `config.yaml` goes, the 5-review cap, date ranges, how exact review dates are, sub-ratings, short links, the consent page). Questions now go to Discussions.
 
 ### Fixed
 - **`constraints.txt` could not be installed** — `pip install -r requirements.txt -c constraints.txt` stopped with a version conflict (`boto3` was pinned differently in the two files, and the pinned SeleniumBase needed a newer PyYAML than the one pinned next to it). The file now holds the versions CI tests today, and CI checks on every push that it still resolves.

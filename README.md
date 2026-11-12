@@ -1,10 +1,10 @@
 # Google Reviews Scraper Pro (2026)
 
-![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.3.1-brightgreen)
+![Google Reviews Scraper Pro](https://img.shields.io/badge/Version-1.4.0-brightgreen)
 ![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 ![CI](https://github.com/georgekhananaev/google-reviews-scraper-pro/actions/workflows/ci.yml/badge.svg)
-![Last Update](https://img.shields.io/badge/Last%20Updated-October%202026-red)
+![Last Update](https://img.shields.io/badge/Last%20Updated-November%202026-red)
 
 **FINALLY! A scraper that ACTUALLY WORKS in 2026!** While others break with every Google update, this bad boy keeps on trucking. Say goodbye to the frustration of constantly broken scrapers and hello to a beast that rips through Google's defenses like a hot knife through butter. Multi-business support, SQLite database, MongoDB sync, S3 uploads, and a full CLI toolkit — all in one battle-tested, rock-solid package.
 
@@ -819,7 +819,7 @@ A: Yes, since v1.2.2. They're in `sub_ratings` on each review.
 A: Yes. Short links and full Google Maps place URLs both work.
 
 **Q: The scraper sits on a Google consent page and never reaches Maps.**
-A: That's the full-page consent screen Google shows visitors from the EU. It's handled after v1.3.1, so use the latest `master` until the next release is out.
+A: That's the full-page consent screen Google shows visitors from the EU. It's handled since v1.4.0, so update and you're through.
 
 **Q: I have a question, not a bug. Where do I ask?**
 A: In [Discussions (Q&A)](https://github.com/georgekhananaev/google-reviews-scraper-pro/discussions/categories/q-a). Answers stay searchable there for the next person.
