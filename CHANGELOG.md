@@ -4,6 +4,9 @@ All notable changes to Google Reviews Scraper Pro.
 
 ## [Unreleased]
 
+### Added
+- **Docker image** — a `Dockerfile` with Chromium and its driver included (Intel/AMD and ARM), running as a non-root user with all data in `/data`. `docker-compose.yml` adds the API server and MongoDB. A new workflow builds the image on every push and pull request, starts Chrome inside it with the network off, and publishes version tags to `ghcr.io/georgekhananaev/google-reviews-scraper-pro`. The container runs signed out, so Google's 5-review wall applies there; see the README.
+
 ### Fixed
 - **Stuck on Google's consent page** (PR #28 by @lollo03) — visitors from the EU can be redirected to the full-page `consent.google.com` screen instead of Google Maps, and the scraper waited there because `dismiss_cookies` only knew the cookie overlay. It now recognises that page by its hostname, clicks "Accept all" (found by a selector that doesn't depend on the language, with the consent form's buttons as a fallback) and waits until the browser has left the page. The check runs when a place loads, when the place name is read and after the search navigation. Tests added in `tests/test_scraper_consent.py`.
 

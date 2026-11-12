@@ -1,0 +1,10 @@
+# Keep the build context small, and keep local data and secrets out of the image.
+*
+!requirements.txt
+!start.py
+!api_server.py
+!config.sample.yaml
+!modules/
+!docker/
+**/__pycache__/
+**/*.py[cod]

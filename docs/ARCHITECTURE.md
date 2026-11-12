@@ -2260,76 +2260,11 @@ python start.py --url "https://maps.app.goo.gl/xyz"
 
 ### 2. Docker Deployment
 
-**Dockerfile** (example):
-```dockerfile
-FROM python:3.13-slim
+The repo ships a `Dockerfile` (Chromium and its driver included, Intel/AMD and ARM) and a `docker-compose.yml` that adds the API server and MongoDB. See "Or Run It in Docker" in the README for the commands.
 
-# Install Chrome
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    ca-certificates \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install ChromeDriver
-RUN wget -O /tmp/chromedriver.zip http://chromedriver.storage.googleapis.com/$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE)/chromedriver_linux64.zip \
-    && unzip /tmp/chromedriver.zip -d /usr/local/bin/ \
-    && rm /tmp/chromedriver.zip
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-ENV CHROME_BIN=/usr/bin/google-chrome
-ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
-
-CMD ["python", "start.py"]
-```
-
-**Docker Compose**:
-```yaml
-version: '3.8'
-services:
-  scraper:
-    build: .
-    volumes:
-      - ./config.yaml:/app/config.yaml
-      - ./review_images:/app/review_images
-      - ./google_reviews.json:/app/google_reviews.json
-    environment:
-      - LOG_LEVEL=INFO
-      - MONGODB_URI=mongodb://mongo:27017
-    depends_on:
-      - mongo
-
-  mongo:
-    image: mongo:7
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-
-  api:
-    build: .
-    command: python api_server.py
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./config.yaml:/app/config.yaml
-    environment:
-      - LOG_LEVEL=INFO
-    depends_on:
-      - mongo
-
-volumes:
-  mongo_data:
-```
+- Data lives in `/data` inside the container: `config.yaml`, `reviews.db`, `review_images/`, `logs/` and the JSON export. Mount a folder there.
+- `CHROME_BIN` points at the bundled Chromium, which is how `setup_driver` knows it runs in a container.
+- The container runs signed out. Signed-in mode needs a visible Chrome window for the one-time login.
 
 ### 3. Cloud VM (AWS EC2, Google Cloud, etc.)
 

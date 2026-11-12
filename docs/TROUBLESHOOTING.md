@@ -79,10 +79,9 @@ WebDriverException: Message: unknown error: cannot find Chrome binary
    export CHROME_BIN=/path/to/chrome
    ```
 
-3. **Docker users:** Ensure Chrome is installed in Dockerfile:
-   ```dockerfile
-   RUN apt-get update && apt-get install -y google-chrome-stable
-   ENV CHROME_BIN=/usr/bin/google-chrome
+3. **Docker users:** the repo's `Dockerfile` already installs Chromium and sets `CHROME_BIN`. Check it with:
+   ```bash
+   docker run --rm --entrypoint python google-reviews-scraper-pro /app/docker/check_chrome.py
    ```
 
 ---
